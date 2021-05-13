@@ -2,7 +2,7 @@
 
 <img align="right" width="160px" height="160px" src="img/scriban.png">
 
-Scriban is a fast, powerful, safe and lightweight text templating language and engine for .NET, with a compatibility mode for parsing `liquid` templates.
+Scriban is a fast, powerful, safe and lightweight scripting language and engine for .NET, which was primarily developed for text templating with a compatibility mode for parsing `liquid` templates.
 
 ```C#
 // Parse a scriban template
@@ -35,11 +35,30 @@ var template = Template.Parse(@"
 var result = template.Render(new { Products = this.ProductList });
 ```
 
+Scriban can also be used in pure scripting context without templating (`{{` and `}}`) and can help you to create your own small DSL.
+
 > **NOTICE**
 >
 > By default, Properties and methods of .NET objects are automatically exposed with lowercase and `_` names. It means that a property like `MyMethodIsNice` will be exposed as `my_method_is_nice`. This is the default convention, originally to match the behavior of liquid templates.
 > If you want to change this behavior, you need to use a [`MemberRenamer`](doc/runtime.md#member-renamer) delegate
 
+## New in 3.0+
+
+- AST is now fully visitable with `ScriptVisitor`. You can now access `Parent` on any `ScriptNode` object and navigate the AST.
+  - Improve AST round-trip by preserving whitespaces around template enter`{{` and exit`}}` 
+- Several new language features:
+  - Hexadecimal/binary numbers: `0x1ef` or `0b101010`
+  - Support for large integers
+  - [New parametric functions](doc/language.md#72-parametric-functions): `func sub(x,y = 1, z...); ret x - y - z[0]; end`
+  - [New inline functions](doc/language.md#73-inline-functions): `sub(x,y) = x - y`
+  - Optional member access with `?.` instead of regular `.` (e.g `a?.b?.c`)
+  - Conditional expressions: `cond ? a : b`
+- Separate language mode (via `ScriptLang` enum) from template/scripting parsing mode (`ScriptMode`).
+- New language parsing mode `Scientific`, in addition to default Scriban and Liquid language mode.
+- More fine-grained options on the `TemplateContext` to define scripting behaviors (`EnableRelaxedTargetAccess`, `EnableRelaxedMemberAccess`, `EnableRelaxedFunctionAccess`, `EnableRelaxedIndexerAccess`, `EnableNullIndexer`)
+- New `object.eval` and `object.eval_template` function to evaluate Scriban expressions/templates at runtime.
+- Better support for `IFormattable` objects.   
+  
 ## Features
 
 - Very **efficient**, **fast** parser and a **lightweight** runtime. CPU and Garbage Collector friendly. Check the [benchmarks](doc/benchmarks.md) for more details.
@@ -87,15 +106,45 @@ You can install the [Scriban Extension for Visual Studio Code](https://marketpla
 
 Scriban is available as a NuGet package: [![NuGet](https://img.shields.io/nuget/v/Scriban.svg)](https://www.nuget.org/packages/Scriban/)
 
-Compatible with the following .NET framework profiles:
+Compatible with the following .NET Standard 2.0+ (**New in 3.0**)
 
-- .NET Framework 3.5
-- .NET Framework 4.0
-- .NET Framework 4.5+ (supports asynchronous code and timeouts for regular expressions)
-- .NET Standard1.1+ (some features are not available)
-- .NET Standard1.3+ (which means .NET Core, Xamarin, UWP, Unity etc.)
+For support for older framework (.NET 3.5, 4.0, 4.5, .NET Standard 1.1, 1.3, they are only provided in older Scriban 2.x, which is no longer supported. 
 
 Also the [Scriban.Signed](https://www.nuget.org/packages/Scriban.Signed/) NuGet package provides signed assemblies.
+
+## Source Embedding
+
+Starting with Scriban 3.2.1+, the package comes with source included so that you can internalize your usage of Scriban into your project. This can be useful in an environment where you can't easily consume NuGet references (e.g Roslyn Source Generators).
+
+> WARNING: Currently, the Scriban sources are not set as readonly, so you should not modify Scriban sources in that mode as it will modify the sources for other projects using Scriban on your machine. Use this feature at your own risks!
+
+In order to activate this feature you need to:
+
+- Set the property `PackageScribanIncludeSource` to `true` in your project:
+  ```xml
+  <PropertyGroup>
+    <PackageScribanIncludeSource>true</PackageScribanIncludeSource>
+  </PropertyGroup>
+  ```
+- Add the `IncludeAssets="Build"` to the NuGet PackageReference for Scriban:
+  ```xml
+  <ItemGroup>
+    <PackageReference Include="Scriban" Version="3.2.1" IncludeAssets="Build"/>
+  </ItemGroup>
+  ```
+
+If you are targeting `netstandard2.0` or `.NET Framework 4.7.2+`, in order to compile Scriban you will need these NuGet package references (that can come from a dependency that you already have):
+
+```xml
+<ItemGroup>
+    <PackageReference Include="Microsoft.CSharp" Version="4.5.0" />
+    <PackageReference Include="System.Threading.Tasks.Extensions" Version="4.5.0" />
+</ItemGroup>
+```
+
+> NOTE: In this mode, all Scriban types are marked as `internal`.
+> 
+> You should see a Scriban folder and empty subfolders in your project. This is an issue with Visual Studio 2019 16.8.x (and before) and it will be fixed in VS 2019 16.9+
 
 ## Benchmarks
 
@@ -111,7 +160,8 @@ This software is released under the [BSD-Clause 2 license](https://opensource.or
 * [Fluid](https://github.com/sebastienros/fluid/) .NET liquid templating engine
 * [Nustache](https://github.com/jdiamond/Nustache): Logic-less templates for .NET
 * [Handlebars.Net](https://github.com/rexm/Handlebars.Net): .NET port of handlebars.js
-
+* [Textrude](https://github.com/NeilMacMullen/Textrude): UI and CLI tools to turn CSV/JSON/YAML models into code using Scriban templates
+  
 ## Online Demo
 
 * (https://scribanonline.azurewebsites.net/): ASP.NET Core Sample.

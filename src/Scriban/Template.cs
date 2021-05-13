@@ -1,10 +1,11 @@
 // Copyright (c) Alexandre Mutel. All rights reserved.
-// Licensed under the BSD-Clause 2 license. 
+// Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
+
+#nullable disable
+
 using System;
 using System.Collections.Generic;
-using System.IO;
-using Scriban.Helpers;
 using Scriban.Parsing;
 using Scriban.Runtime;
 using Scriban.Syntax;
@@ -14,13 +15,18 @@ namespace Scriban
     /// <summary>
     /// Basic entry point class to parse templates and render them. For more advanced scenario, you should use <see cref="TemplateContext"/> directly.
     /// </summary>
-    public partial class Template
+#if SCRIBAN_PUBLIC
+    public
+#else
+    internal
+#endif
+    partial class Template
     {
         private Template(ParserOptions? parserOptions, LexerOptions? lexerOptions, string sourceFilePath)
         {
             ParserOptions = parserOptions ?? new ParserOptions();
             LexerOptions = lexerOptions ?? new LexerOptions();
-            Messages = new List<LogMessage>();
+            Messages = new LogMessageBag();
             this.SourceFilePath = sourceFilePath;
         }
 
@@ -30,7 +36,7 @@ namespace Scriban
         public string SourceFilePath { get; }
 
         /// <summary>
-        /// Gets the resulting compiled <see cref="ScriptPage"/>. May be null if this template <see cref="HasErrors"/> 
+        /// Gets the resulting compiled <see cref="ScriptPage"/>. May be null if this template <see cref="HasErrors"/>
         /// </summary>
         public ScriptPage Page { get; private set; }
 
@@ -42,7 +48,7 @@ namespace Scriban
         /// <summary>
         /// Gets the lexer and parsing messages.
         /// </summary>
-        public List<LogMessage> Messages { get; private set; }
+        public LogMessageBag Messages { get; }
 
         /// <summary>
         /// The parser options used by this Template
@@ -80,7 +86,7 @@ namespace Scriban
         public static Template ParseLiquid(string text, string sourceFilePath = null, ParserOptions? parserOptions = null, LexerOptions? lexerOptions = null)
         {
             var localLexerOptions = lexerOptions ?? new LexerOptions();
-            localLexerOptions.Mode = ScriptMode.Liquid;
+            localLexerOptions.Lang = ScriptLang.Liquid;
             return Parse(text, sourceFilePath, parserOptions, localLexerOptions);
         }
 
@@ -126,13 +132,14 @@ namespace Scriban
             var previousOutput = context.EnableOutput;
             try
             {
+                context.UseScientific = LexerOptions.Lang == ScriptLang.Scientific;
                 context.EnableOutput = false;
                 return EvaluateAndRender(context, false);
             }
             finally
             {
                 context.EnableOutput = previousOutput;
-            }        
+            }
         }
 
         /// <summary>
@@ -151,18 +158,17 @@ namespace Scriban
                 scriptObject.Import(model, renamer: memberRenamer, filter: memberFilter);
             }
 
-            var context = new TemplateContext
-            {
-                EnableOutput = false,
-                MemberRenamer = memberRenamer,
-                MemberFilter = memberFilter
-            };
+            var context = LexerOptions.Lang == ScriptLang.Liquid ? new LiquidTemplateContext() : new TemplateContext();
+            context.EnableOutput = false;
+            context.MemberRenamer = memberRenamer;
+            context.MemberFilter = memberFilter;
+            context.UseScientific = LexerOptions.Lang == ScriptLang.Scientific;
             context.PushGlobal(scriptObject);
             var result = Evaluate(context);
             context.PopGlobal();
             return result;
         }
-        
+
         /// <summary>
         /// Renders this template using the specified context. See remarks.
         /// </summary>
@@ -199,7 +205,7 @@ namespace Scriban
                 scriptObject.Import(model, renamer: memberRenamer, filter: memberFilter);
             }
 
-            var context = LexerOptions.Mode == ScriptMode.Liquid ? new LiquidTemplateContext() : new TemplateContext();
+            var context = LexerOptions.Lang == ScriptLang.Liquid ? new LiquidTemplateContext() : new TemplateContext();
             context.MemberRenamer = memberRenamer;
             context.MemberFilter = memberFilter;
             context.PushGlobal(scriptObject);
@@ -211,11 +217,11 @@ namespace Scriban
         /// </summary>
         /// <param name="options">The rendering options</param>
         /// <returns>The template converted back to a textual representation of the template</returns>
-        public string ToText(TemplateRewriterOptions options = default(TemplateRewriterOptions))
+        public string ToText(ScriptPrinterOptions options = default(ScriptPrinterOptions))
         {
             CheckErrors();
             var writer = new TextWriterOutput();
-            var renderContext = new TemplateRewriterContext(writer, options);
+            var renderContext = new ScriptPrinter(writer, options);
             renderContext.Write(Page);
 
             return writer.ToString();
@@ -232,7 +238,7 @@ namespace Scriban
         {
             if (context == null) throw new ArgumentNullException(nameof(context));
             CheckErrors();
-            
+
             // Make sure that we are using the same parserOptions
             if (SourceFilePath != null)
             {
@@ -241,6 +247,7 @@ namespace Scriban
 
             try
             {
+                context.UseScientific = LexerOptions.Lang == ScriptLang.Scientific;
                 var result = context.Evaluate(Page);
                 if (render)
                 {
@@ -262,7 +269,7 @@ namespace Scriban
 
         private void CheckErrors()
         {
-            if (HasErrors) throw new InvalidOperationException("This template has errors. Check the <Template.HasError> and <Template.Messages> before evaluating a template. Messages:\n" + StringHelper.Join("\n", Messages));
+            if (HasErrors) throw new InvalidOperationException("This template has errors. Check the <Template.HasError> and <Template.Messages> before evaluating a template. Messages:\n" + string.Join("\n", Messages));
         }
 
         private void ParseInternal(string text, string sourceFilePath)
@@ -271,7 +278,6 @@ namespace Scriban
             if (string.IsNullOrEmpty(text))
             {
                 HasErrors = false;
-                Messages = new List<LogMessage>();
                 Page = new ScriptPage() {Span = new SourceSpan(sourceFilePath, new TextPosition(), TextPosition.Eof) };
                 return;
             }
@@ -282,7 +288,7 @@ namespace Scriban
             Page = parser.Run();
 
             HasErrors = parser.HasErrors;
-            Messages = parser.Messages;
+            Messages.AddRange(parser.Messages);
         }
     }
 }

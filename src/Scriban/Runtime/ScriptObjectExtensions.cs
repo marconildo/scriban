@@ -1,6 +1,9 @@
 // Copyright (c) Alexandre Mutel. All rights reserved.
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
+
+#nullable disable
+
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -15,7 +18,12 @@ namespace Scriban.Runtime
     /// <summary>
     /// Extensions attached to an <see cref="IScriptObject"/>.
     /// </summary>
-    public static class ScriptObjectExtensions
+#if SCRIBAN_PUBLIC
+    public
+#else
+    internal
+#endif
+    static class ScriptObjectExtensions
     {
         /// <summary>
         /// Asserts that the specified script object is not readonly or throws a <see cref="ScriptRuntimeException"/>
@@ -68,27 +76,9 @@ namespace Scriban.Runtime
             return @this.TryGetValue(null, new SourceSpan(), key, out value);
         }
 
-        /// <summary>
-        /// Tries to set the value and readonly state of the specified member.
-        /// </summary>
-        /// <param name="this">The script object</param>
-        /// <param name="member">The member.</param>
-        /// <param name="value">The value.</param>
-        /// <param name="readOnly">if set to <c>true</c> the value will be read only.</param>
-        /// <returns><c>true</c> if the value could be set; <c>false</c> if a value already exist an is readonly</returns>
-        public static bool TrySetValue(this IScriptObject @this, string member, object value, bool readOnly)
-        {
-            if (!@this.CanWrite(member))
-            {
-                return false;
-            }
-            @this.SetValue(null, new SourceSpan(), member, value, readOnly);
-            return true;
-        }
-
         public static void SetValue(this IScriptObject @this, string member, object value, bool readOnly)
         {
-            @this.SetValue(null, new SourceSpan(), member, value, readOnly);
+            @this.TrySetValue(null, new SourceSpan(), member, value, readOnly);
         }
 
         /// <summary>
@@ -193,7 +183,7 @@ namespace Scriban.Runtime
                 throw new ArgumentOutOfRangeException(nameof(obj), $"Unsupported object type `{obj.GetType()}`. Expecting plain class or struct");
             }
 
-            var typeInfo = (obj as Type ?? obj.GetType()).GetTypeInfo();
+            var typeInfo = (obj as Type ?? obj.GetType());
             bool useStatic = false;
             bool useInstance = false;
             if (obj is Type)
@@ -208,11 +198,7 @@ namespace Scriban.Runtime
 
             renamer = renamer ?? StandardMemberRenamer.Default;
 
-#if NET35 || NET40
             var typeToImports = new Stack<Type>();
-#else
-            var typeToImports = new Stack<TypeInfo>();
-#endif
             while (typeInfo != null)
             {
                 typeToImports.Push(typeInfo);
@@ -221,8 +207,10 @@ namespace Scriban.Runtime
                     break;
                 }
 
-                typeInfo = typeInfo.BaseType.GetTypeInfo();
+                typeInfo = typeInfo.BaseType;
             }
+
+            var scriptObj = script as ScriptObject;
 
             while (typeToImports.Count > 0)
             {
@@ -230,9 +218,9 @@ namespace Scriban.Runtime
 
                 if ((flags & ScriptMemberImportFlags.Field) != 0)
                 {
-                    foreach (var field in typeInfo.GetDeclaredFields())
+                    foreach (var field in typeInfo.GetFields(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public | BindingFlags.DeclaredOnly))
                     {
-                        if (!field.IsPublic)
+                        if (!field.IsPublic || field.IsLiteral)
                         {
                             continue;
                         }
@@ -251,21 +239,24 @@ namespace Scriban.Runtime
                             }
 
                             // If field is init only or literal, it cannot be set back so we mark it as read-only
-                            script.SetValue(null, new SourceSpan(), newFieldName, field.GetValue(obj), field.IsInitOnly || field.IsLiteral);
+                            if (scriptObj == null)
+                            {
+                                script.TrySetValue(null, new SourceSpan(), newFieldName, field.GetValue(obj), field.IsInitOnly || field.IsLiteral);
+                            }
+                            else
+                            {
+                                scriptObj.SetValue(newFieldName, field.GetValue(obj), field.IsInitOnly || field.IsLiteral);
+                            }
                         }
                     }
                 }
 
                 if ((flags & ScriptMemberImportFlags.Property) != 0)
                 {
-                    foreach (var property in typeInfo.GetDeclaredProperties())
+                    foreach (var property in typeInfo.GetProperties(BindingFlags.Instance | BindingFlags.Static | BindingFlags.Public| BindingFlags.DeclaredOnly))
                     {
                         // Workaround with .NET Core, extension method is not working (retuning null despite doing property.GetMethod), so we need to inline it here
-#if NET35 || NET40
-                        var getMethod = property.GetGetMethod();
-#else
                         var getMethod = property.GetMethod;
-#endif
                         if (!property.CanRead || !getMethod.IsPublic)
                         {
                             continue;
@@ -287,14 +278,22 @@ namespace Scriban.Runtime
 
                             // Initially, we were setting readonly depending on the precense of a set method, but this is not compatible with liquid implems, so we remove readonly restriction
                             //script.SetValue(null, new SourceSpan(), newPropertyName, property.GetValue(obj), property.GetSetMethod() == null || !property.GetSetMethod().IsPublic);
-                            script.SetValue(null, new SourceSpan(), newPropertyName, property.GetValue(obj), false);
+                            if (scriptObj == null)
+                            {
+                                script.TrySetValue(null, new SourceSpan(), newPropertyName, property.GetValue(obj), false);
+                            }
+                            else
+                            {
+                                if (property.GetIndexParameters().Length==0)
+                                    scriptObj.SetValue(newPropertyName, property.GetValue(obj), false);
+                            }
                         }
                     }
                 }
 
                 if ((flags & ScriptMemberImportFlags.Method) != 0 && useStatic)
                 {
-                    foreach (var method in typeInfo.GetDeclaredMethods())
+                    foreach (var method in typeInfo.GetMethods(BindingFlags.Static | BindingFlags.Public| BindingFlags.DeclaredOnly))
                     {
                         if (filter != null && !filter(method))
                         {
@@ -310,7 +309,14 @@ namespace Scriban.Runtime
                                 newMethodName = method.Name;
                             }
 
-                            script.SetValue(null, new SourceSpan(), newMethodName, DynamicCustomFunction.Create(obj, method), true);
+                            if (scriptObj == null)
+                            {
+                                script.TrySetValue(null, new SourceSpan(), newMethodName, DynamicCustomFunction.Create(obj, method), true);
+                            }
+                            else
+                            {
+                                scriptObj.SetValue(newMethodName, DynamicCustomFunction.Create(obj, method), true);
+                            }
                         }
                     }
                 }
@@ -329,7 +335,7 @@ namespace Scriban.Runtime
             if (member == null) throw new ArgumentNullException(nameof(member));
             if (function == null) throw new ArgumentNullException(nameof(function));
 
-            script.SetValue(null, new SourceSpan(), member, DynamicCustomFunction.Create(function.Target, function.GetMethodInfo()), true);
+            script.TrySetValue(null, new SourceSpan(), member, DynamicCustomFunction.Create(function.Target, function.GetMethodInfo()), true);
         }
     }
 }

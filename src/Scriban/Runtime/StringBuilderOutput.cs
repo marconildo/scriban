@@ -1,19 +1,25 @@
 // Copyright (c) Alexandre Mutel. All rights reserved.
-// Licensed under the BSD-Clause 2 license. 
+// Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
+
+#nullable disable
+
 using System;
 using System.Text;
 using System.Threading;
-#if SCRIBAN_ASYNC
 using System.Threading.Tasks;
-#endif
 
 namespace Scriban.Runtime
 {
     /// <summary>
     /// Output to a <see cref="StringBuilder"/>
     /// </summary>
-    public class StringBuilderOutput : IScriptOutput
+#if SCRIBAN_PUBLIC
+    public
+#else
+    internal
+#endif
+    class StringBuilderOutput : IScriptOutput
     {
         [ThreadStatic] private static StringBuilder TlsBuilder;
 
@@ -38,10 +44,9 @@ namespace Scriban.Runtime
         /// </summary>
         public StringBuilder Builder { get; }
 
-        public IScriptOutput Write(string text, int offset, int count)
+        public void Write(string text, int offset, int count)
         {
             Builder.Append(text, offset, count);
-            return this;
         }
 
         /// <summary>
@@ -59,11 +64,11 @@ namespace Scriban.Runtime
         }
 
 
-#if SCRIBAN_ASYNC
-        public ValueTask<IScriptOutput> WriteAsync(string text, int offset, int count, CancellationToken cancellationToken)
+#if !SCRIBAN_NO_ASYNC
+        public ValueTask WriteAsync(string text, int offset, int count, CancellationToken cancellationToken)
         {
             Builder.Append(text, offset, count);
-            return new ValueTask<IScriptOutput>(this);
+            return default;
         }
 #endif
         public override string ToString()

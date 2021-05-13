@@ -1,19 +1,25 @@
 // Copyright (c) Alexandre Mutel. All rights reserved.
-// Licensed under the BSD-Clause 2 license. 
+// Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
+
+#nullable disable
+
 using System;
 using System.IO;
 using System.Threading;
-#if SCRIBAN_ASYNC
 using System.Threading.Tasks;
-#endif
 
 namespace Scriban.Runtime
 {
     /// <summary>
     /// Output to a <see cref="TextWriter"/>
     /// </summary>
-    public class TextWriterOutput : IScriptOutput
+#if SCRIBAN_PUBLIC
+    public
+#else
+    internal
+#endif
+    class TextWriterOutput : IScriptOutput
     {
         /// <summary>
         /// Initialize a new instance of <see cref="TextWriterOutput"/> with a writer default to <see cref="StringWriter"/>
@@ -36,18 +42,16 @@ namespace Scriban.Runtime
         /// </summary>
         public TextWriter Writer { get; }
 
-        public IScriptOutput Write(string text, int offset, int count)
+        public void Write(string text, int offset, int count)
         {
             if (text == null) throw new ArgumentNullException(nameof(text));
             Writer.Write(text.Substring(offset, count));
-            return this;
         }
-#if SCRIBAN_ASYNC
-        public async ValueTask<IScriptOutput> WriteAsync(string text, int offset, int count, CancellationToken cancellationToken)
+#if !SCRIBAN_NO_ASYNC
+        public async ValueTask WriteAsync(string text, int offset, int count, CancellationToken cancellationToken)
         {
             // TextWriter doesn't support to pass CancellationToken oO
             await Writer.WriteAsync(text.Substring(offset, count));
-            return this;
         }
 #endif
 

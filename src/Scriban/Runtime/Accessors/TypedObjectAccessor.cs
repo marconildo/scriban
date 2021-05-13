@@ -1,6 +1,9 @@
 // Copyright (c) Alexandre Mutel. All rights reserved.
 // Licensed under the BSD-Clause 2 license.
 // See license.txt file in the project root for full license information.
+
+#nullable disable
+
 using System;
 using System.Collections;
 using System.Collections.Generic;
@@ -10,12 +13,18 @@ using Scriban.Parsing;
 
 namespace Scriban.Runtime.Accessors
 {
-    public class TypedObjectAccessor : IObjectAccessor
+#if SCRIBAN_PUBLIC
+    public
+#else
+    internal
+#endif
+    class TypedObjectAccessor : IObjectAccessor, IItemAccessor
     {
         private readonly MemberFilterDelegate _filter;
         private readonly Type _type;
         private readonly MemberRenamerDelegate _renamer;
         private readonly Dictionary<string, MemberInfo> _members;
+        private PropertyInfo _indexer;
 
         public TypedObjectAccessor(Type targetType, MemberFilterDelegate filter, MemberRenamerDelegate renamer)
         {
@@ -25,6 +34,8 @@ namespace Scriban.Runtime.Accessors
             _members = new Dictionary<string, MemberInfo>();
             PrepareMembers();
         }
+
+        public Type ItemType { get; private set; }
 
         public int GetMemberCount(TemplateContext context, SourceSpan span, object target)
         {
@@ -61,6 +72,28 @@ namespace Scriban.Runtime.Accessors
             return false;
         }
 
+        public bool TryGetItem(TemplateContext context, SourceSpan span, object target, object index, out object value)
+        {
+            if (this._indexer is null)
+            {
+                value = default;
+                return false;
+            }
+            value = this._indexer.GetValue(target, new []{index});
+            return true;
+        }
+
+
+        public bool TrySetItem(TemplateContext context, SourceSpan span, object target, object index, object value)
+        {
+            if (this._indexer is null)
+            {
+                return false;
+            }
+            this._indexer.SetValue(target, value, new []{index});
+            return true;
+        }
+
         public bool TrySetValue(TemplateContext context, SourceSpan span, object target, string member, object value)
         {
             MemberInfo memberAccessor;
@@ -76,20 +109,22 @@ namespace Scriban.Runtime.Accessors
                     var propertyAccessor = (PropertyInfo)memberAccessor;
                     propertyAccessor.SetValue(target, value);
                 }
+
+                return true;
             }
-            return true;
+            return false;
         }
 
         private void PrepareMembers()
         {
-            var type = this._type.GetTypeInfo();
+            var type = this._type;
 
             while (type != null)
             {
-                foreach (var field in type.GetDeclaredFields())
+                foreach (var field in type.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly))
                 {
                     var keep = field.GetCustomAttribute<ScriptMemberIgnoreAttribute>() == null;
-                    if (keep && !field.IsStatic && field.IsPublic && (_filter == null || _filter(field)))
+                    if (keep && !field.IsStatic && field.IsPublic && !field.IsLiteral && (_filter == null || _filter(field)))
                     {
                         var newFieldName = Rename(field);
                         if (string.IsNullOrEmpty(newFieldName))
@@ -104,27 +139,32 @@ namespace Scriban.Runtime.Accessors
                     }
                 }
 
-                foreach (var property in type.GetDeclaredProperties())
+                foreach (var property in type.GetProperties(BindingFlags.Instance | BindingFlags.Public | BindingFlags.DeclaredOnly))
                 {
                     var keep = property.GetCustomAttribute<ScriptMemberIgnoreAttribute>() == null;
 
                     // Workaround with .NET Core, extension method is not working (retuning null despite doing property.GetMethod), so we need to inline it here
-#if NET35 || NET40
-                    var getMethod = property.GetGetMethod();
-#else
                     var getMethod = property.GetMethod;
-#endif
                     if (keep && property.CanRead && !getMethod.IsStatic && getMethod.IsPublic && (_filter == null || _filter(property)))
                     {
-                        var newPropertyName = Rename(property);
-                        if (string.IsNullOrEmpty(newPropertyName))
+                        var indexParameters = property.GetIndexParameters();
+                        if (indexParameters.Length > 0)
                         {
-                            newPropertyName = property.Name;
+                            ItemType = indexParameters[0].ParameterType;
+                            _indexer = property;
                         }
-
-                        if (!_members.ContainsKey(newPropertyName))
+                        else
                         {
-                            _members.Add(newPropertyName, property);
+                            var newPropertyName = Rename(property);
+                            if (string.IsNullOrEmpty(newPropertyName))
+                            {
+                                newPropertyName = property.Name;
+                            }
+
+                            if (!_members.ContainsKey(newPropertyName))
+                            {
+                                _members.Add(newPropertyName, property);
+                            }
                         }
                     }
                 }
@@ -133,7 +173,7 @@ namespace Scriban.Runtime.Accessors
                 {
                     break;
                 }
-                type = type.BaseType.GetTypeInfo();
+                type = type.BaseType;
             }
         }
 
