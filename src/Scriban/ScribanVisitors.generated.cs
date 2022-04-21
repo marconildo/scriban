@@ -476,6 +476,29 @@ namespace Scriban.Syntax
 #else
     internal
 #endif
+    partial class ScriptIncrementDecrementExpression
+    {
+        public override int ChildrenCount => 2;
+
+        protected override ScriptNode GetChildrenImpl(int index)
+        {
+            return index switch
+            {
+                0 => OperatorToken,
+                1 => Right,
+                _ => null
+            };
+        }
+
+        public override void Accept(ScriptVisitor visitor) => visitor.Visit(this);
+        public override TResult Accept<TResult>(ScriptVisitor<TResult> visitor) => visitor.Visit(this);
+    }
+
+#if SCRIBAN_PUBLIC
+    public
+#else
+    internal
+#endif
     partial class ScriptIndexerExpression
     {
         public override int ChildrenCount => 4;
@@ -926,20 +949,6 @@ namespace Scriban.Syntax
 #else
     internal
 #endif
-    partial class ScriptVariableLoop
-    {
-        public override int ChildrenCount => 0;
-
-        protected override ScriptNode GetChildrenImpl(int index) => null;
-        public override void Accept(ScriptVisitor visitor) => visitor.Visit(this);
-        public override TResult Accept<TResult>(ScriptVisitor<TResult> visitor) => visitor.Visit(this);
-    }
-
-#if SCRIBAN_PUBLIC
-    public
-#else
-    internal
-#endif
     partial class ScriptWhenStatement
     {
         public override int ChildrenCount => 4;
@@ -1135,7 +1144,7 @@ namespace Scriban.Syntax
 
         public override ScriptNode Visit(ScriptEscapeStatement node)
         {
-            return new ScriptEscapeStatement() { WhitespaceMode = node.WhitespaceMode, IsEntering = node.IsEntering, EscapeCount = node.EscapeCount };
+            return new ScriptEscapeStatement() { WhitespaceMode = node.WhitespaceMode, Indent = node.Indent, IsEntering = node.IsEntering, EscapeCount = node.EscapeCount };
         }
 
         public override ScriptNode Visit(ScriptExpressionStatement node)
@@ -1205,6 +1214,13 @@ namespace Scriban.Syntax
             var newImportKeyword = (ScriptKeyword)Visit((ScriptNode)node.ImportKeyword);
             var newExpression = (ScriptExpression)Visit((ScriptNode)node.Expression);
             return new ScriptImportStatement() { ImportKeyword = newImportKeyword, Expression = newExpression };
+        }
+
+        public override ScriptNode Visit(ScriptIncrementDecrementExpression node)
+        {
+            var newOperatorToken = (ScriptToken)Visit((ScriptNode)node.OperatorToken);
+            var newRight = (ScriptExpression)Visit((ScriptNode)node.Right);
+            return new ScriptIncrementDecrementExpression() { OperatorToken = newOperatorToken, Right = newRight, Operator = node.Operator, Post = node.Post };
         }
 
         public override ScriptNode Visit(ScriptIndexerExpression node)
@@ -1416,6 +1432,7 @@ namespace Scriban.Syntax
         public virtual void Visit(ScriptIdentifier node) => DefaultVisit(node);
         public virtual void Visit(ScriptIfStatement node) => DefaultVisit(node);
         public virtual void Visit(ScriptImportStatement node) => DefaultVisit(node);
+        public virtual void Visit(ScriptIncrementDecrementExpression node) => DefaultVisit(node);
         public virtual void Visit(ScriptIndexerExpression node) => DefaultVisit(node);
         public virtual void Visit(ScriptIsEmptyExpression node) => DefaultVisit(node);
         public virtual void Visit(ScriptKeyword node) => DefaultVisit(node);
@@ -1438,7 +1455,6 @@ namespace Scriban.Syntax
         public virtual void Visit(ScriptUnaryExpression node) => DefaultVisit(node);
         public virtual void Visit(ScriptVariableGlobal node) => DefaultVisit(node);
         public virtual void Visit(ScriptVariableLocal node) => DefaultVisit(node);
-        public virtual void Visit(ScriptVariableLoop node) => DefaultVisit(node);
         public virtual void Visit(ScriptWhenStatement node) => DefaultVisit(node);
         public virtual void Visit(ScriptWhileStatement node) => DefaultVisit(node);
         public virtual void Visit(ScriptWithStatement node) => DefaultVisit(node);
@@ -1474,6 +1490,7 @@ namespace Scriban.Syntax
         public virtual TResult Visit(ScriptIdentifier node) => DefaultVisit(node);
         public virtual TResult Visit(ScriptIfStatement node) => DefaultVisit(node);
         public virtual TResult Visit(ScriptImportStatement node) => DefaultVisit(node);
+        public virtual TResult Visit(ScriptIncrementDecrementExpression node) => DefaultVisit(node);
         public virtual TResult Visit(ScriptIndexerExpression node) => DefaultVisit(node);
         public virtual TResult Visit(ScriptIsEmptyExpression node) => DefaultVisit(node);
         public virtual TResult Visit(ScriptKeyword node) => DefaultVisit(node);
@@ -1496,7 +1513,6 @@ namespace Scriban.Syntax
         public virtual TResult Visit(ScriptUnaryExpression node) => DefaultVisit(node);
         public virtual TResult Visit(ScriptVariableGlobal node) => DefaultVisit(node);
         public virtual TResult Visit(ScriptVariableLocal node) => DefaultVisit(node);
-        public virtual TResult Visit(ScriptVariableLoop node) => DefaultVisit(node);
         public virtual TResult Visit(ScriptWhenStatement node) => DefaultVisit(node);
         public virtual TResult Visit(ScriptWhileStatement node) => DefaultVisit(node);
         public virtual TResult Visit(ScriptWithStatement node) => DefaultVisit(node);

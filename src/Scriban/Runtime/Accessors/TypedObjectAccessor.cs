@@ -18,7 +18,7 @@ namespace Scriban.Runtime.Accessors
 #else
     internal
 #endif
-    class TypedObjectAccessor : IObjectAccessor, IItemAccessor
+    class TypedObjectAccessor : IObjectAccessor
     {
         private readonly MemberFilterDelegate _filter;
         private readonly Type _type;
@@ -35,7 +35,7 @@ namespace Scriban.Runtime.Accessors
             PrepareMembers();
         }
 
-        public Type ItemType { get; private set; }
+        public Type IndexType { get; private set; }
 
         public int GetMemberCount(TemplateContext context, SourceSpan span, object target)
         {
@@ -83,41 +83,38 @@ namespace Scriban.Runtime.Accessors
             return true;
         }
 
-
         public bool TrySetItem(TemplateContext context, SourceSpan span, object target, object index, object value)
         {
-            if (this._indexer is null)
+            if (_indexer is null)
             {
                 return false;
             }
-            this._indexer.SetValue(target, value, new []{index});
+            _indexer.SetValue(target, value, new []{index});
             return true;
         }
 
+        public bool HasIndexer => _indexer != null;
+
         public bool TrySetValue(TemplateContext context, SourceSpan span, object target, string member, object value)
         {
-            MemberInfo memberAccessor;
-            if (_members.TryGetValue(member, out memberAccessor))
-            {
-                var fieldAccessor = memberAccessor as FieldInfo;
-                if (fieldAccessor != null)
-                {
-                    fieldAccessor.SetValue(target, value);
-                }
-                else
-                {
-                    var propertyAccessor = (PropertyInfo)memberAccessor;
-                    propertyAccessor.SetValue(target, value);
-                }
+            if (!_members.TryGetValue(member, out MemberInfo memberAccessor))
+                return false;
 
+            if (memberAccessor is FieldInfo fieldAccessor)
+            {
+                fieldAccessor.SetValue(target, context.ToObject(span, value, fieldAccessor.FieldType));
                 return true;
             }
-            return false;
+
+            var propertyAccessor = (PropertyInfo)memberAccessor;
+                propertyAccessor.SetValue(target, context.ToObject(span, value, propertyAccessor.PropertyType));
+
+            return true;
         }
 
         private void PrepareMembers()
         {
-            var type = this._type;
+            var type = _type;
 
             while (type != null)
             {
@@ -150,7 +147,7 @@ namespace Scriban.Runtime.Accessors
                         var indexParameters = property.GetIndexParameters();
                         if (indexParameters.Length > 0)
                         {
-                            ItemType = indexParameters[0].ParameterType;
+                            IndexType = indexParameters[0].ParameterType;
                             _indexer = property;
                         }
                         else

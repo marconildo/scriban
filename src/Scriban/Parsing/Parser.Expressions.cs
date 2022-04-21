@@ -41,7 +41,7 @@ namespace Scriban.Parsing
                 case TokenType.Divide: binaryOperator = ScriptBinaryOperator.Divide; break;
                 case TokenType.DoubleDivide: binaryOperator = ScriptBinaryOperator.DivideRound; break;
                 case TokenType.Plus: binaryOperator = ScriptBinaryOperator.Add; break;
-                case TokenType.Minus: binaryOperator = ScriptBinaryOperator.Substract; break;
+                case TokenType.Minus: binaryOperator = ScriptBinaryOperator.Subtract; break;
                 case TokenType.Percent: binaryOperator = ScriptBinaryOperator.Modulus; break;
                 case TokenType.DoubleLessThan: binaryOperator = ScriptBinaryOperator.ShiftLeft; break;
                 case TokenType.DoubleGreaterThan: binaryOperator = ScriptBinaryOperator.ShiftRight; break;
@@ -102,6 +102,10 @@ namespace Scriban.Parsing
             var expressionDepthBeforeEntering = _expressionDepth;
 
             var enteringPrecedence = precedence;
+
+            // Override the mode
+            var originalMode = mode;
+            mode = mode == ParseExpressionMode.WhenExpression ? ParseExpressionMode.Default : mode;
 
             EnterExpression();
             try
@@ -173,6 +177,10 @@ namespace Scriban.Parsing
                     case TokenType.OpenBracket:
                         leftOperand = ParseArrayInitializer();
                         break;
+                    case TokenType.DoublePlus:
+                    case TokenType.DoubleMinus:
+                        leftOperand = ParseIncrementDecrementExpression();
+                        break;
                     default:
                         if (IsStartingAsUnaryExpression())
                         {
@@ -234,6 +242,12 @@ namespace Scriban.Parsing
                                 memberExpression.DotToken = dotToken;
                                 memberExpression.Target = leftOperand;
 
+                                // We parse left associated, so we need to propagate the ?. if it is nested
+                                if (leftOperand is ScriptMemberExpression nestedMemberExpression && nestedMemberExpression.DotToken.TokenType == TokenType.QuestionDot)
+                                {
+                                    dotToken.TokenType = TokenType.QuestionDot;
+                                }
+
                                 var member = ParseVariable();
                                 if (!(member is ScriptVariable))
                                 {
@@ -252,6 +266,24 @@ namespace Scriban.Parsing
                         continue;
                     }
 
+                    if (Current.Type == TokenType.DoublePlus || Current.Type == TokenType.DoubleMinus)
+                    {
+                        var op = Current;
+                        if (!(leftOperand is IScriptVariablePath))
+                        {
+                            LogError($"The operand of an increment or decrement operator must be a variable, property or indexer");
+                        }
+                        var unaryExpression = new ScriptIncrementDecrementExpression
+                        {
+                            Right = leftOperand,
+                            Span = leftOperand.Span,
+                            OperatorToken = this.ParseToken(op.Type),
+                            Operator = op.Type == TokenType.DoublePlus ? ScriptUnaryOperator.Increment : ScriptUnaryOperator.Decrement,
+                            Post = true
+                        };
+                        leftOperand = unaryExpression;
+                    }
+
                     // If we have a bracket but left operand is a (variable || member || indexer), then we consider next as an indexer
                     // unit test: 130-indexer-accessor-accept1.txt
                     if (Current.Type == TokenType.OpenBracket && (leftOperand is IScriptVariablePath || leftOperand is ScriptLiteral || leftOperand is ScriptFunctionCall) && !IsPreviousCharWhitespace())
@@ -263,7 +295,7 @@ namespace Scriban.Parsing
                         ExpectAndParseTokenTo(indexerExpression.OpenBracket, TokenType.OpenBracket); // parse [
 
                         // unit test: 130-indexer-accessor-error5.txt
-                        indexerExpression.Index = ExpectAndParseExpression(indexerExpression, functionCall, 0, $"Expecting <index_expression> instead of `{GetAsText(Current)}`");
+                        indexerExpression.Index = ExpectAndParseExpression(indexerExpression, functionCall, 0, $"Expecting <index_expression> instead of `{GetAsText(Current)}`", mode);
 
                         if (Current.Type != TokenType.CloseBracket)
                         {
@@ -301,45 +333,43 @@ namespace Scriban.Parsing
                         break;
                     }
 
-                    if (Current.Type == TokenType.Equal)
+                    if (Current.Type == TokenType.Equal && leftOperand is ScriptFunctionCall call && call.TryGetFunctionDeclaration(out ScriptFunction declaration))
                     {
-                        if (leftOperand is ScriptFunctionCall call && call.TryGetFunctionDeclaration(out ScriptFunction declaration))
+                        if (_expressionLevel > 1 || !allowAssignment)
                         {
-                            if (_expressionLevel > 1 || !allowAssignment)
-                            {
-                                LogError(leftOperand, $"Creating a function is only allowed for a top level assignment");
-                            }
-
-                            declaration.EqualToken = ParseToken(TokenType.Equal); // eat equal token
-                            declaration.Body = ParseExpressionStatement();
-                            declaration.Span.End = declaration.Body.Span.End;
-                            leftOperand = new ScriptExpressionAsStatement(declaration) {Span = declaration.Span};
-                        }
-                        else
-                        {
-                            var assignExpression = Open<ScriptAssignExpression>();
-
-                            if (leftOperand != null)
-                            {
-                                assignExpression.Span.Start = leftOperand.Span.Start;
-                            }
-
-                            if (leftOperand != null && !(leftOperand is IScriptVariablePath) || functionCall != null || _expressionLevel > 1 || !allowAssignment)
-                            {
-                                // unit test: 101-assign-complex-error1.txt
-                                LogError(assignExpression, $"Expression is only allowed for a top level assignment");
-                            }
-
-                            ExpectAndParseTokenTo(assignExpression.EqualToken, TokenType.Equal);
-
-                            assignExpression.Target = TransformKeyword(leftOperand);
-
-                            // unit test: 105-assign-error3.txt
-                            assignExpression.Value = ExpectAndParseExpression(assignExpression, parentExpression);
-
-                            leftOperand = Close(assignExpression);
+                            LogError(leftOperand, $"Creating a function is only allowed for a top level assignment");
                         }
 
+                        declaration.EqualToken = ParseToken(TokenType.Equal); // eat equal token
+                        declaration.Body = ParseExpressionStatement();
+                        declaration.Span.End = declaration.Body.Span.End;
+                        leftOperand = new ScriptExpressionAsStatement(declaration) {Span = declaration.Span};
+                        break;
+                    }
+                    if(TryGetCompoundAssignmentOperator(out var scriptToken, out var tokenType) && !(scriptToken is null))
+                    {
+                        var assignExpression = Open<ScriptAssignExpression>();
+                        assignExpression.EqualToken = scriptToken;
+
+                        if (leftOperand != null)
+                        {
+                            assignExpression.Span.Start = leftOperand.Span.Start;
+                        }
+
+                        if (leftOperand != null && !(leftOperand is IScriptVariablePath) || functionCall != null || _expressionLevel > 1 || !allowAssignment)
+                        {
+                            // unit test: 101-assign-complex-error1.txt
+                            LogError(assignExpression, $"Expression is only allowed for a top level assignment");
+                        }
+
+                        ExpectAndParseTokenTo(assignExpression.EqualToken, tokenType);
+
+                        assignExpression.Target = TransformKeyword(leftOperand);
+
+                        // unit test: 105-assign-error3.txt
+                        assignExpression.Value = ExpectAndParseExpression(assignExpression, parentExpression);
+
+                        leftOperand = Close(assignExpression);
                         break;
                     }
 
@@ -348,6 +378,11 @@ namespace Scriban.Parsing
                     int newPrecedence;
                     if (TryBinaryOperator(out binaryOperatorType, out newPrecedence) || (_isLiquid && TryLiquidBinaryOperator(out binaryOperatorType, out newPrecedence)))
                     {
+                        if (originalMode == ParseExpressionMode.WhenExpression && binaryOperatorType == ScriptBinaryOperator.Or)
+                        {
+                            break;
+                        }
+
                         // Check precedence to see if we should "take" this operator here (Thanks TimJones for the tip code! ;)
                         if (newPrecedence <= precedence)
                         {
@@ -378,7 +413,8 @@ namespace Scriban.Parsing
                         // unit test: 110-binary-simple-error1.txt
                         binaryExpression.Right = ExpectAndParseExpression(binaryExpression,
                             functionCall ?? parentExpression, newPrecedence,
-                            $"Expecting an <expression> to the right of the operator instead of `{GetAsText(Current)}`");
+                            $"Expecting an <expression> to the right of the operator instead of `{GetAsText(Current)}`",
+                            mode); // propagate the mode in case we are in DefaultNoNamedArgument (so that the colon in 1 + 2 + 3 : will be correctly skipped)
                         leftOperand = Close(binaryExpression);
 
                         continue;
@@ -409,12 +445,12 @@ namespace Scriban.Parsing
                         // Parse ?
                         ExpectAndParseTokenTo(conditionalExpression.QuestionToken, TokenType.Question);
 
-                        conditionalExpression.ThenValue = ExpectAndParseExpression(parentNode, mode: ParseExpressionMode.DefaultNoNamedArgument);
+                        conditionalExpression.ThenValue = ExpectAndParseExpression(conditionalExpression, mode: ParseExpressionMode.DefaultNoNamedArgument);
 
                         // Parse :
                         ExpectAndParseTokenTo(conditionalExpression.ColonToken, TokenType.Colon);
 
-                        conditionalExpression.ElseValue = ExpectAndParseExpression(parentNode, mode: ParseExpressionMode.DefaultNoNamedArgument);
+                        conditionalExpression.ElseValue = ExpectAndParseExpression(conditionalExpression, mode: ParseExpressionMode.DefaultNoNamedArgument);
 
                         Close(conditionalExpression);
                         leftOperand = conditionalExpression;
@@ -640,9 +676,12 @@ namespace Scriban.Parsing
                         break;
                     }
 
-                    if ((!_isScientific) && (leftOperand is ScriptVariableGlobal) && (parentNode is ScriptPipeCall) && (functionCall == null))
+                    if ((!_isScientific) && (parentNode is ScriptPipeCall) // after a pipe call we expect to see a function call
+                                         && (functionCall == null)         // but when function is not followed by any parameter e.g. '1 | math.abs', above code does not create function call,
+                                                                           // here we fix that by creating function call, but only when leftOperand is e.g. '1 | abs' or '1 | math.abs'
+                                         && (leftOperand is IScriptVariablePath) // we need that restriction since leftOperand can be of other type e.g. binary expression '"123" | string.to_int + 1'
+                        )
                     {
-                        // only valid option for pipceCall.To is a function call, but when a function invocation does not have any arguments it is recognized as global variable here we fix that
                         var funcCall = Open<ScriptFunctionCall>();
                         funcCall.Target = leftOperand;
                         funcCall.Span = leftOperand.Span;
@@ -940,6 +979,33 @@ namespace Scriban.Parsing
             return existingKeyword;
         }
 
+        private ScriptExpression ParseIncrementDecrementExpression()
+        {
+            // Parse the operator as verbatim text
+            var unaryTokenType = Current.Type;
+            var expression = Open<ScriptIncrementDecrementExpression>();
+            expression.OperatorToken = ParseToken(unaryTokenType);
+            switch (unaryTokenType)
+            {
+                case TokenType.DoublePlus:
+                    expression.Operator = ScriptUnaryOperator.Increment;
+                    break;
+                case TokenType.DoubleMinus:
+                    expression.Operator = ScriptUnaryOperator.Decrement;
+                    break;
+                default:
+                    LogError($"Unexpected token `{unaryTokenType}` for unary expression");
+                    break;
+            }
+            var newPrecedence = GetDefaultUnaryOperatorPrecedence(expression.Operator);
+            expression.Right = ExpectAndParseExpression(expression, null, newPrecedence);
+            if (!(expression.Right is IScriptVariablePath))
+            {
+                LogError($"The operand of an increment or decrement operator must be a variable, property or indexer");
+            }
+            return Close(expression);
+        }
+
         private ScriptExpression ParseUnaryExpression()
         {
             // unit test: 113-unary.txt
@@ -980,7 +1046,7 @@ namespace Scriban.Parsing
             newPrecedence = GetDefaultUnaryOperatorPrecedence(unaryExpression.Operator);
 
             // unit test: 115-unary-error1.txt
-            unaryExpression.Right = ExpectAndParseExpression(unaryExpression, null, newPrecedence);
+            unaryExpression.Right = ExpectAndParseExpression(unaryExpression, null, newPrecedence) ;
             return Close(unaryExpression);
         }
 
@@ -1078,6 +1144,22 @@ namespace Scriban.Parsing
             return false;
         }
 
+        private bool TryGetCompoundAssignmentOperator(out ScriptToken scriptToken, out TokenType tokenType)
+        {
+            tokenType = this.Current.Type;
+            scriptToken = tokenType switch
+            {
+                TokenType.Equal => ScriptToken.Equal(),
+                TokenType.PlusEqual => ScriptToken.PlusEqual(),
+                TokenType.MinusEqual => ScriptToken.MinusEqual(),
+                TokenType.AsteriskEqual => ScriptToken.StarEqual(),
+                TokenType.DivideEqual => ScriptToken.DivideEqual(),
+                TokenType.DoubleDivideEqual => ScriptToken.DoubleDivideEqual(),
+                TokenType.PercentEqual => ScriptToken.ModulusEqual(),
+                _ => default
+            };
+            return !(scriptToken is null);
+        }
         private bool IsStartingAsUnaryExpression()
         {
             switch (Current.Type)
@@ -1086,6 +1168,8 @@ namespace Scriban.Parsing
                 case TokenType.Minus:
                 case TokenType.Plus:
                 case TokenType.Arroba:
+                case TokenType.DoublePlus:
+                case TokenType.DoubleMinus:
                     return true;
 
                 case TokenType.Caret:
@@ -1182,7 +1266,7 @@ namespace Scriban.Parsing
                     return 90;
 
                 case ScriptBinaryOperator.Add:
-                case ScriptBinaryOperator.Substract:
+                case ScriptBinaryOperator.Subtract:
                     return PrecedenceOfAdd;
                 case ScriptBinaryOperator.Multiply:
                 case ScriptBinaryOperator.Divide:
@@ -1211,6 +1295,10 @@ namespace Scriban.Parsing
                 case ScriptUnaryOperator.FunctionAlias:
                 case ScriptUnaryOperator.FunctionParametersExpand:
                     return 200;
+                case ScriptUnaryOperator.Decrement:
+                case ScriptUnaryOperator.Increment:
+                    // Increment and decrement are "primary expressions" in C#, higher precedence than unary operators
+                    return 210;
                 default:
                     return 0;
             }
@@ -1257,6 +1345,11 @@ namespace Scriban.Parsing
             /// Only literal, unary, nested, array/object initializer, dot access, array access
             /// </summary>
             BasicExpression,
+
+            /// <summary>
+            /// A when expression cannot use `||`, ',' or 'or' at the top-level as they are used to separate expressions.
+            /// </summary>
+            WhenExpression,
         }
     }
 }

@@ -53,7 +53,10 @@ namespace Scriban.Syntax
         LiquidHasValue,
 
         Add,
-        Substract,
+        Subtract,
+
+        [Obsolete]
+        Substract = Subtract,
 
         Multiply,
         Divide,
@@ -68,6 +71,10 @@ namespace Scriban.Syntax
         RangeExclude,
 
         Custom,
+
+
+
+
     }
 
 #if SCRIBAN_PUBLIC
@@ -88,7 +95,7 @@ namespace Scriban.Syntax
             {
                 case ScriptBinaryOperator.Add:
                     return TokenType.Plus;
-                case ScriptBinaryOperator.Substract:
+                case ScriptBinaryOperator.Subtract:
                     return TokenType.Minus;
                 case ScriptBinaryOperator.Divide:
                     return TokenType.Divide;
@@ -144,8 +151,8 @@ namespace Scriban.Syntax
             {
                 case ScriptBinaryOperator.Add:
                     return "+";
-                case ScriptBinaryOperator.Substract:
-                    // The substract operator requires to be separated by space
+                case ScriptBinaryOperator.Subtract:
+                    // The subtract operator requires to be separated by space
                     return "-";
                 case ScriptBinaryOperator.Divide:
                     return "/";

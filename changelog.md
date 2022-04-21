@@ -1,5 +1,66 @@
 # Changelog
 
+> This changelog is no longer used for newer version. Please visits https://github.com/scriban/scriban/releases
+
+## 5.4.0 (6 Feb 2022)
+- Fix async when accessing variables (#382)
+- Fix doc for object.kind (#394)
+- Fix comparison between ulong and int (#395)
+- Add a notice for html.strip that it can fail/timeout in case of malformed HTML (#406)
+- Log an error instead of an exception in an invalid syntax with for/if/else (#393)
+
+## 5.3.0 (6 Feb 2022)
+- Add support for auto-indent (#398)
+
+## 5.2.0 (6 Feb 2022)
+- Add support for specifying custom format and culture for date.parse
+
+## 5.1.0 (5 Feb 2022)
+- Fix accessing null?.property when EnableRelaxedMemberAccess == False (#401)
+- Migrate tests to net6.0 (#410)
+- Add support for anykind of expressions in when clauses (#409)
+
+## 5.0.0 (20 Oct 2021)
+- Fix scope for variable (global vs local) (#385)
+
+## 4.1.0 (7 October 2021)
+- Add `IQueryable<T>` support in `for`-loops. 
+    - Parameter `offset:count` will be translated to `IQueryable<T>.Skip(count)`
+    - Parameter `reversed` will be translated to `IQueryable<T>.Reverse()`
+    - Parameter `limit:count` will be translated to `IQueryable<T>.Take(count)`
+    - [Special for loop variables](https://github.com/scriban/scriban/blob/master/doc/language.md#special-loop-variables) are supported with the exception of `rindex` and `last`
+    - Optional `LoopLimitQueryable`-property on `TemplateContext` object to control looplimit in case of `IQueryable<T>` (defaults to LoopLimit)
+
+## 4.0.2 (22 September 2021)
+- Fix issue with object instance conversion between different object types
+
+## 4.0.1 (3 June 2021)
+- Fix ternary operator with binary expression (#355)
+
+## 4.0.0 (2 June 2021)
+- Remove `IItemAccessor` and merge features into `IObjectAccessor`.
+- Add support for non-string indexers for regular dictionaries (#364)
+
+## 3.9.0 (31 May 2021)
+- Improve AST to generate a function call when a pipecall is used with a parameterless function
+- Add `TemplateContext.Reset` method to allow to cleanup the state of the `TemplateContext` 
+
+## 3.8.2 (27 May 2021)
+- Fix regession with new interface `IItemAccessor` not compatible with source distribution (#363)
+
+## 3.8.1 (25 May 2021)
+- Fix regression with ternary operator (#360)
+
+## 3.8.0 (25 May 2021)
+- Add special assignment operators like `x += 1` (#353)
+- Add `blank` alias to `empty` (#347)
+- Add support for .NET indexers (#346)
+- Fix parsing of function call AST in case of a no-arg function call with a pipe (#344)
+- Add support for opposite of null-coalescing operator `?!`
+- Allow to disable safe runtime checks if `TemplateContext.LoopLimit` or `RecurseLimit` are equal to `0`
+- Fix issue with `%L` date formatter to not drop 0 milliseconds (#349)  
+- Rename ScriptBinaryOperator.Substract to Subtract
+
 ## 3.7.0 (1 May 2021)
 - Add `TemplateContext.ObjectRecursionLimit` to protect against recursion limits (#340)
 - Add `string.remove_last` function (#339)
@@ -64,7 +125,7 @@
 - Fix unary minus operator missing in Liquid
 
 ## 3.0.6 (6 Dec 2020)
-- Fix substraction in scientific mode when no whitespace was involved (e.g `1-2`) reslting in an implicit multiplication (1 * -2).
+- Fix subtraction in scientific mode when no whitespace was involved (e.g `1-2`) reslting in an implicit multiplication (1 * -2).
 
 ## 3.0.5 (1 Dec 2020)
 - Fix indentation for nested includes when using TemplateContext.IndentWithInclude

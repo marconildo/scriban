@@ -22,7 +22,7 @@ using Scriban.Runtime.Accessors;
 using Scriban.Syntax;
 
 #if !SCRIBAN_SIGNED
-[assembly:InternalsVisibleTo("Scriban.Tests")]
+[assembly: InternalsVisibleTo("Scriban.Tests")]
 #endif
 
 namespace Scriban
@@ -39,14 +39,14 @@ namespace Scriban
     {
         private FastStack<ScriptObject> _availableStores;
         internal FastStack<ScriptBlockStatement> BlockDelegates;
-        private FastStack<IScriptObject> _globalStores;
+        private FastStack<VariableContext> _globalContexts;
         private FastStack<CultureInfo> _cultures;
         private readonly Dictionary<Type, IListAccessor> _listAccessors;
         private FastStack<ScriptLoopStatementBase> _loops;
         private readonly Dictionary<Type, IObjectAccessor> _memberAccessors;
         private FastStack<IScriptOutput> _outputs;
-        private FastStack<LocalContext> _localContexts;
-        private LocalContext _currentLocalContext;
+        private FastStack<VariableContext> _localContexts;
+        private VariableContext _currentLocalContext;
         private IScriptOutput _output;
         private FastStack<string> _sourceFiles;
         private FastStack<object> _caseValues;
@@ -54,7 +54,8 @@ namespace Scriban
         private bool _isFunctionCallDisabled;
         private int _loopStep;
         private int _getOrSetValueLevel;
-        private FastStack<LocalContext> _availableLocalContexts;
+        private FastStack<VariableContext> _availableGlobalContexts;
+        private FastStack<VariableContext> _availableLocalContexts;
         private FastStack<ScriptPipeArguments> _availablePipeArguments;
         private FastStack<ScriptPipeArguments> _pipeArguments;
         private FastStack<List<ScriptExpression>> _availableScriptExpressionLists;
@@ -120,6 +121,7 @@ namespace Scriban
             EnableRelaxedMemberAccess = true;
             EnableRelaxedFunctionAccess = false;
             EnableRelaxedIndexerAccess = true;
+            AutoIndent = true;
             LoopLimit = 1000;
             RecursiveLimit = 100;
             LimitToString = 0;
@@ -139,9 +141,10 @@ namespace Scriban
             _output = new StringBuilderOutput();
             _outputs.Push(_output);
 
-            _globalStores = new FastStack<IScriptObject>(4);
-            _availableLocalContexts = new FastStack<LocalContext>(4);
-            _localContexts = new FastStack<LocalContext>(4);
+            _globalContexts = new FastStack<VariableContext>(4);
+            _availableGlobalContexts = new FastStack<VariableContext>(4);
+            _availableLocalContexts = new FastStack<VariableContext>(4);
+            _localContexts = new FastStack<VariableContext>(4);
             _availableStores = new FastStack<ScriptObject>(4);
             _cultures = new FastStack<CultureInfo>(4);
             _caseValues = new FastStack<object>(4);
@@ -188,11 +191,21 @@ namespace Scriban
         /// Gets a boolean if the context is being used  with liquid
         /// </summary>
         public bool IsLiquid { get; protected set; }
+        
+        /// <summary>
+        /// If sets to <c>true</c>, the include statement will maintain the indent.
+        /// </summary>
+        public bool AutoIndent { get; set; }
 
         /// <summary>
         /// If sets to <c>true</c>, the include statement will maintain the indent.
         /// </summary>
-        public bool IndentWithInclude { get; set; }
+        [Obsolete("Use AutoIndent instead. Note that AutoIndent is true by default.")]
+        public bool IndentWithInclude
+        {
+            get => AutoIndent;
+            set => AutoIndent = value;
+        }
 
         /// <summary>
         /// Gets or sets the buffer limit in characters for a ToString in a list/string. Default is 0, no limit.
@@ -245,6 +258,13 @@ namespace Scriban
         /// </summary>
         public int LoopLimit { get; set; }
 
+
+        /// <summary>
+        /// A loop limit that can be used at runtime to limit the number of loops over a IQueryable object. Defaults to LoopLimit property.
+        /// Set to 0 to disable checking IQueryable loop limit.
+        /// </summary>
+        public int? LoopLimitQueryable { get; set; }
+
         /// <summary>
         /// A function recursive limit count used at runtime to limit the number of recursive calls. Default is 100
         /// Set to 0 to disable checking recursive call limit.
@@ -279,7 +299,7 @@ namespace Scriban
         /// <summary>
         /// Gets the current global <see cref="ScriptObject"/>.
         /// </summary>
-        public IScriptObject CurrentGlobal => _globalStores.Peek();
+        public IScriptObject CurrentGlobal => _globalContexts.Peek()?.LocalObject;
 
         /// <summary>
         /// Gets the cached templates, used by the include function.
@@ -317,6 +337,26 @@ namespace Scriban
         /// Store the current stack of pipe arguments used by <see cref="ScriptPipeCall"/> and <see cref="ScriptFunctionCall"/>
         /// </summary>
         internal ScriptPipeArguments CurrentPipeArguments => _currentPipeArguments;
+
+        /// <summary>
+        /// Gets the number of <see cref="PushGlobal"/> that are pushed to this context.
+        /// </summary>
+        public int GlobalCount => _globalContexts.Count;
+
+        /// <summary>
+        /// Gets the number of <see cref="PushOutput()"/> that are pushed to this context.
+        /// </summary>
+        public int OutputCount => _outputs.Count;
+        
+        /// <summary>
+        /// Gets the number of <see cref="PushCulture"/> that are pushed to this context.
+        /// </summary>
+        public int CultureCount => _cultures.Count;
+
+        /// <summary>
+        /// Gets the number of <see cref="PushSourceFile"/> that are pushed to this context.
+        /// </summary>
+        public int SourceFileCount => _sourceFiles.Count;
 
         /// <summary>
         /// Gets or sets the internal state of control flow.
@@ -377,7 +417,7 @@ namespace Scriban
         public string CurrentIndent { get; set; }
 
         /// <summary>
-        /// Indicates if we are in a looop
+        /// Indicates if we are in a loop
         /// </summary>
         /// <value>
         ///   <c>true</c> if [in loop]; otherwise, <c>false</c>.
@@ -548,7 +588,7 @@ namespace Scriban
         private static readonly object TrueObject = true;
         private static readonly object FalseObject = false;
 
-        public void SetValue(ScriptVariableLoop variable, bool value)
+        public void SetValue(ScriptVariable variable, bool value)
         {
             SetValue(variable, value ? TrueObject : FalseObject);
         }
@@ -739,17 +779,6 @@ namespace Scriban
                 _getOrSetValueLevel = 0;
                 _isFunctionCallDisabled = aliasReturnedFunction;
                 var result = scriptNode.Evaluate(this);
-
-                // If we are at a top-level evaluation and the result is an enumeration
-                // force its evaluation within the current context
-                if (previousNode == null
-                    &&  result is IEnumerable it
-                    && !(result is string)
-                    )
-                {
-                    result = new ScriptArray(it);
-                }
-
                 return result;
             }
             catch (ScriptRuntimeException ex) when (this.RenderRuntimeException != null)
@@ -792,6 +821,44 @@ namespace Scriban
                 _memberAccessors.Add(type, accessor);
             }
             return accessor;
+        }
+
+        /// <summary>
+        /// This method is reset-ing correctly this instance so that
+        /// it can be reused safely on the same thread for another run.
+        /// </summary>
+        /// <remarks>
+        /// - Removes any pending output expect the top level one.
+        /// - This methods clears the top level output (which is a guaranteed to be <see cref="StringBuilderOutput"/>).
+        /// - Remove all global stored pushed via <see cref="PushGlobal"/> expect the builtin top level one.
+        /// - Remove all cultures pushed via <see cref="PushCulture"/>.
+        /// - Remove all source files pushed via <see cref="PushSourceFile"/>.
+        /// </remarks>
+        public virtual void Reset()
+        {
+            // We need to leave one output
+            while (OutputCount > 1)
+            {
+                PopOutput();
+            }
+            // Clear the output
+            ((StringBuilderOutput)Output).Builder.Length = 0;
+
+            // We need to keep the builtins
+            while (GlobalCount > 1)
+            {
+                PopGlobal();
+            }
+
+            while (CultureCount > 0)
+            {
+                PopCulture();
+            }
+
+            while (SourceFileCount > 0)
+            {
+                PopSourceFile();
+            }
         }
 
         /// <summary>
@@ -897,7 +964,7 @@ namespace Scriban
             if (loop == null) throw new ArgumentNullException(nameof(loop));
             _loops.Push(loop);
             _loopStep = 0;
-            PushVariableScope(ScriptVariableScope.Loop);
+            PushVariableScope(VariableScope.Loop);
             OnEnterLoop(loop);
         }
 
@@ -920,7 +987,7 @@ namespace Scriban
             }
             finally
             {
-                PopVariableScope(ScriptVariableScope.Loop);
+                PopVariableScope(VariableScope.Loop);
                 _loops.Pop();
                 _loopStep = 0;
             }
@@ -934,16 +1001,37 @@ namespace Scriban
         {
         }
 
-        internal bool StepLoop(ScriptLoopStatementBase loop)
+        internal enum LoopType
+        {
+            Default,
+            Queryable
+        }
+
+        internal bool StepLoop(ScriptLoopStatementBase loop, LoopType loopType = LoopType.Default )
         {
             Debug.Assert(_loops.Count > 0);
 
             _loopStep++;
-            if (LoopLimit != 0 && _loopStep > LoopLimit)
+
+            int loopLimit;
+            switch (loopType)
+            {
+                case LoopType.Queryable:
+                    {
+                        loopLimit = LoopLimitQueryable.GetValueOrDefault(LoopLimit);
+                        break;
+                    }
+                default:
+                    {
+                        loopLimit = LoopLimit;
+                        break;
+                    }
+            }
+
+            if (loopLimit != 0 && _loopStep > loopLimit)
             {
                 var currentLoopStatement = _loops.Peek();
-
-                throw new ScriptRuntimeException(currentLoopStatement.Span, $"Exceeding number of iteration limit `{LoopLimit}` for loop statement."); // unit test: 215-for-statement-error1.txt
+                throw new ScriptRuntimeException(currentLoopStatement.Span, $"Exceeding number of iteration limit `{loopLimit}` for loop statement."); // unit test: 215-for-statement-error1.txt
             }
             return OnStepLoop(loop);
         }

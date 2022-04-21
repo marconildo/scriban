@@ -19,15 +19,87 @@ using Scriban.Syntax;
 
 namespace Scriban.Tests
 {
+    delegate string Args(object[] args);
+
     [TestFixture]
     public class TestRuntime
     {
         [Test]
+        public void TestLoop()
+        {
+
+            var template = Template.Parse(@"{{
+my_function(x) = x * i
+result = 0
+for i in [1,2,3,4]
+    result = result + (my_function 10)
+end
+}}Result: {{ result }}
+");
+            var result = template.Render();
+
+
+
+
+        }
+
+
+
+
+
+        [Test]
+        public void TestPars()
+        {
+            string Dump(params object[] args)
+            {
+                return "hello";
+            }
+
+            ScriptObject model = new ScriptObject();
+            ScriptObject debug = new ScriptObject();
+            Args dump = Dump;
+
+            debug.Import("dump", dump);
+            model["debug"] = debug;
+
+            var input = "{{debug.dump(10, \"hello\", [0, 1, 2])}}";
+            var template = Template.Parse(input);
+            var result = template.Render(model);
+
+            Assert.AreEqual("hello", result);
+        }
+
+        [Test]
+        public void TestUlong()
+        {
+            var input = @"{{if value > 0; 1; else; 2; end;}}";
+
+            var template = Template.Parse(input);
+            var result = template.Render(new { value = (ulong) 1} );
+            Assert.AreEqual("1", result);
+        }
+
+        [Test]
+        public void TestDictionaryInt()
+        {
+            int MyInt = 1;
+            Dictionary<int, string> MyDict = new();
+            MyDict.Add(MyInt, "hello");
+
+            string templateTxt = "{{ MyDict[MyInt] }}";
+
+            Template template = Template.Parse(templateTxt);
+            var result = template.Render(new { MyDict, MyInt }, member => member.Name);
+
+            Assert.AreEqual("hello", result);
+        }
+
+        [Test]
         public void TesterFilterEvaluation()
         {
             var result = Template.Parse("{{['', '200', '','400'] | array.filter @string.empty}}").Evaluate(new TemplateContext());
-            Assert.IsInstanceOf<ScriptArray>(result);
-            var array = (ScriptArray) result;
+            Assert.IsInstanceOf<ScriptRange>(result);
+            var array = (ScriptRange) result;
             Assert.AreEqual(2, array.Count);
             Assert.AreEqual("", array[0]);
             Assert.AreEqual("", array[1]);
@@ -908,6 +980,9 @@ Tax: {{ 7 | match_tax }}";
 
                 var result = Template.Parse("{{a.property_a").Render(context);
                 Assert.AreEqual("A", result);
+
+                result = Template.Parse("{{null_ref?.property_a").Render(context);
+                Assert.AreEqual(string.Empty, result);
 
                 Assert.Catch<ScriptRuntimeException>(() =>
                    Template.Parse("{{a.property_a.null_ref}}").Render(context));

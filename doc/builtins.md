@@ -706,7 +706,7 @@ A datetime object represents an instant in time, expressed as a date and time of
 [:top:](#builtins)
 #### Binary operations
 
-The substract operation `date1 - date2`: Substract `date2` from `date1` and return a timespan internal object (see timespan object below).
+The subtract operation `date1 - date2`: Subtract `date2` from `date1` and return a timespan internal object (see timespan object below).
 
 Other comparison operators(`==`, `!=`, `<=`, `>=`, `<`, `>`) are also working with date objects.
 
@@ -749,7 +749,7 @@ Returns a datetime object of the current time, including the hour, minutes, seco
 ```
 > **output**
 ```html
-2021
+2022
 ```
 
 [:top:](#builtins)
@@ -945,7 +945,7 @@ A new date
 ### `date.parse`
 
 ```
-date.parse <text>
+date.parse <text> <pattern>? <culture>?
 ```
 
 #### Description
@@ -955,6 +955,8 @@ Parses the specified input string to a date object.
 #### Arguments
 
 - `text`: A text representing a date.
+- `pattern`: The date format pattern. See `to_string` method about the format of a pattern.
+- `culture`: The culture used to format the datetime. Default is current culture.
 
 #### Returns
 
@@ -965,10 +967,16 @@ A date object
 > **input**
 ```scriban-html
 {{ date.parse '2016/01/05' }}
+{{ date.parse '2018--06--17' '%Y--%m--%d' }}
+{{ date.parse '2021/11/30 20:50:23Z' }}
+{{ date.parse '20/01/2022 08:32:48 +00:00' culture:'en-GB' }}
 ```
 > **output**
 ```html
 05 Jan 2016
+17 Jun 2018
+30 Nov 2021
+20 Jan 2022
 ```
 
 [:top:](#builtins)
@@ -1037,7 +1045,7 @@ Suppose that `date.now` would return the date `2013-09-12 22:49:27 +0530`, the f
 | `"%X"` |                   | Preferred representation for the time alone, no date
 | `"%y"` |  `"13"`           | Gives year without century of the time
 | `"%Y"` |  `"2013"`         | Year of the time
-| `"%Z"` |  `"IST"`          | Gives Time Zone of the time
+| `"%Z"` |  `"+05:30"`       | Gives Time Zone of the time
 | `"%%"` |  `"%"`            | Output the character `%`
 
 Note that the format is using a good part of the ruby format ([source](http://apidock.com/ruby/DateTime/strftime))
@@ -1096,6 +1104,10 @@ Removes any HTML tags from the input string
 The input string removed with any HTML tags
 
 #### Examples
+
+Notice that the implementation of this function is using a simple regex, so it can fail escaping correctly or timeout in case of the malformed html.
+If you are looking for a secure HTML stripped, you might want to plug your own HTML function by using [AngleSharp](https://github.com/AngleSharp/AngleSharp) to
+strip these HTML tags.
 
 > **input**
 ```scriban-html
@@ -1418,16 +1430,16 @@ math.minus <value> <with>
 
 #### Description
 
-Substracts from the input value the `with` value
+Subtracts from the input value the `with` value
 
 #### Arguments
 
 - `value`: The input value
-- `with`: The with value to substract from `value`
+- `with`: The with value to subtract from `value`
 
 #### Returns
 
-The results of the substraction: `value` - `with`
+The results of the subtraction: `value` - `with`
 
 #### Examples
 
@@ -1762,12 +1774,12 @@ Formats an object using specified format.
 > **input**
 ```scriban-html
 {{ 255 | object.format "X4" }}
-{{ 1523 | object.format "N2" "fr-FR" }}
+{{ 1523 | object.format "N2" "en-US" }}
 ```
 > **output**
 ```html
 00FF
-1 523,00
+1,523.00
 ```
 
 [:top:](#builtins)
@@ -1950,7 +1962,8 @@ object.kind <value>
 
 #### Description
 
-Returns string representing the type of the input object. The type can be `string`, `bool`, `number`, `array`, `iterator` and `object`
+Returns string representing the type of the input object. The type can be `string`, `bool`, `byte`, `sbyte`, `ushort`, `short`, `uint`, `int`,
+`ulong`, `long`, `float`, `double`, `decimal`, `bigint`, `enum`, `range`, `array`, `function` and `object`
 
 #### Arguments
 
@@ -2023,6 +2036,10 @@ A list with the member values of the input object
 ## `regex` functions
 
 Functions exposed through `regex` builtin object.
+
+>*Note:* If your regular expression contains backslashes (` \ `), you will need to do one of the following:
+>- Anywhere you would use a ` \ `, use two.  For example: `"\d+\.\d+"` becomes `"\\d+\\.\\d+"`
+>- Use [verbatim strings](language.md#31-strings).  For example: `"\d+\.\d+"` becomes `` `\d+\.\d+` ``
 
 - [`regex.escape`](#regexescape)
 - [`regex.match`](#regexmatch)
@@ -2288,6 +2305,7 @@ String functions available through the builtin object 'string`.
 - [`string.pad_right`](#stringpad_right)
 - [`string.base64_encode`](#stringbase64_encode)
 - [`string.base64_decode`](#stringbase64_decode)
+- [`string.index_of`](#stringindex_of)
 
 [:top:](#builtins)
 ### `string.escape`
@@ -3615,7 +3633,7 @@ string.base64_decode <text>
 #### Description
 
 Decodes a Base64-encoded string to a byte array.
-he encoding of the bytes is assumed to be UTF-8.
+The encoding of the bytes is assumed to be UTF-8.
 
 #### Arguments
 
@@ -3635,6 +3653,39 @@ The decoded string
 ```html
 hello
 ```
+
+[:top:](#builtins)
+### `string.index_of`
+
+```
+string.index_of <text> <search> <startIndex>? <count>? <stringComparison>?
+```
+
+#### Description
+
+Reports the zero-based index of the first occurrence of the specified string in this instance.
+The search starts at a specified character position and examines a specified number of character positions.
+
+#### Arguments
+
+- `text`: The string to search
+- `search`: The string to find the index of.
+- `startIndex`: If provided, the search starting position.
+If , search will start at the beginning of .
+- `count`: If provided, the number of character positions to examine.
+If , all character positions will be considered.
+- `stringComparison`: If provided, the comparison rules for the search.
+If , Allowed values are one of the following:
+    'CurrentCulture', 'CurrentCultureIgnoreCase', 'InvariantCulture', 'InvariantCultureIgnoreCase', 'Ordinal', 'OrdinalIgnoreCase'
+
+#### Returns
+
+The zero-based index position of the  parameter from the start of if  is found, or -1 if it is not. If value is ,
+            the return value is  (if  is not provided, the return value would be zero).
+
+#### Examples
+
+
 [:top:](#builtins)
 
 ## `timespan` functions

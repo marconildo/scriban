@@ -22,7 +22,7 @@ namespace Scriban.Parsing
 #endif
     partial class Parser
     {
-        private void ParseLiquidStatement(string identifier, ScriptStatement parent, ref ScriptStatement statement, ref bool hasEnd, ref bool nextStatement)
+        private void ParseLiquidStatement(string identifier, ScriptNode parent, ref ScriptStatement statement, ref bool hasEnd, ref bool nextStatement)
         {
             var startToken = Current;
             if (!_isLiquidTagSection)
@@ -305,7 +305,7 @@ namespace Scriban.Parsing
             return Close(statement);
         }
 
-        private ScriptStatement ParseLiquidExpressionStatement(ScriptStatement parent)
+        private ScriptStatement ParseLiquidExpressionStatement(ScriptNode parent)
         {
             var startToken = Current;
             CheckNotInCase(parent, startToken);
@@ -343,7 +343,7 @@ namespace Scriban.Parsing
             var statement = Open<ScriptIfStatement>();
             statement.IfKeyword.Span = CurrentSpan;
             NextToken(); // skip ifchanged token
-            statement.Condition = new ScriptMemberExpression() { Target = ScriptVariable.Create(ScriptVariable.ForObject.BaseName, ScriptVariableScope.Loop), Member = ScriptVariable.Create("changed", ScriptVariableScope.Global) };
+            statement.Condition = new ScriptMemberExpression() { Target = ScriptVariable.Create(ScriptVariable.ForObject.BaseName, ScriptVariableScope.Global), Member = ScriptVariable.Create("changed", ScriptVariableScope.Global) };
             statement.Then = ParseBlockStatement(statement);
             Close(statement);
             statement.Condition.Span = statement.Span;
@@ -358,7 +358,7 @@ namespace Scriban.Parsing
             var binaryExpression = Open<ScriptBinaryExpression>();
             binaryExpression.Left = ExpectAndParseVariable(incdecStatement);
             binaryExpression.Right = new ScriptLiteral() {Span = binaryExpression.Span, Value = 1};
-            binaryExpression.Operator = isDec ? ScriptBinaryOperator.Substract : ScriptBinaryOperator.Add;
+            binaryExpression.Operator = isDec ? ScriptBinaryOperator.Subtract : ScriptBinaryOperator.Add;
             ExpectEndOfStatement();
 
             incdecStatement.Expression = binaryExpression;

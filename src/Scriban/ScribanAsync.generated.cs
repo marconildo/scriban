@@ -226,14 +226,6 @@ namespace Scriban
                 _getOrSetValueLevel = 0;
                 _isFunctionCallDisabled = aliasReturnedFunction;
                 var result = await scriptNode.EvaluateAsync(this).ConfigureAwait(false);
-
-                // If we are at a top-level evaluation and the result is an enumeration
-                // force it's evaluation within the current context
-                if (previousNode == null && result is IEnumerable it)
-                {
-                    result = new ScriptArray(it);
-                }
-
                 return result;
             }
             catch (ScriptRuntimeException ex) when (this.RenderRuntimeException != null)
@@ -286,11 +278,11 @@ namespace Scriban
                 {
                     if (setter)
                     {
-                        nextPath.SetValue(this, valueToSet);
+                        await nextPath.SetValueAsync(this, valueToSet).ConfigureAwait(false);
                     }
                     else
                     {
-                        value = nextPath.GetValue(this);
+                        value = await nextPath.GetValueAsync(this).ConfigureAwait(false);
                     }
                 }
                 else if (!setter)
@@ -512,89 +504,6 @@ namespace Scriban.Functions
                 throw new ScriptRuntimeException(callerContext.Span, $"Include template path is null for `{templateName}");
             }
 
-            string indent = null;
-
-            // Handle indent
-            if (context.IndentWithInclude)
-            {
-                // Find the statement for the include
-                var current = callerContext.Parent;
-                while (current != null && !(current is ScriptStatement))
-                {
-                    current = current.Parent;
-                }
-
-                // Find the RawStatement preceding this include
-                ScriptNode childNode = null;
-                bool shouldContinue = true;
-                while (shouldContinue && current != null)
-                {
-                    if (current is ScriptList<ScriptStatement> statementList && childNode is ScriptStatement childStatement)
-                    {
-                        var indexOf = statementList.IndexOf(childStatement);
-
-                        // Case for first indent, if it is not the first statement in the doc
-                        // it's not a valid indent
-                        if (indent != null && indexOf > 0)
-                        {
-                            indent = null;
-                            break;
-                        }
-
-                        for (int i = indexOf - 1; i >= 0; i--)
-                        {
-                            var previousStatement = statementList[i];
-                            if (previousStatement is ScriptEscapeStatement escapeStatement && escapeStatement.IsEntering)
-                            {
-                                if (i > 0 && statementList[i - 1] is ScriptRawStatement rawStatement)
-                                {
-
-                                    var text = rawStatement.Text;
-                                    for (int j = text.Length - 1; j >= 0; j--)
-                                    {
-                                        var c = text[j];
-                                        if (c == '\n')
-                                        {
-                                            shouldContinue = false;
-                                            indent = text.Substring(j + 1);
-                                            break;
-                                        }
-
-                                        if (!char.IsWhiteSpace(c))
-                                        {
-                                            shouldContinue = false;
-                                            break;
-                                        }
-
-                                        if (j == 0)
-                                        {
-                                            // We have a raw statement that has only white spaces
-                                            // It could be the first raw statement of the document
-                                            // so we continue but we handle it later
-                                            indent = text.ToString();
-                                        }
-                                    }
-                                }
-                                else
-                                {
-                                    shouldContinue = false;
-                                }
-
-                                break;
-                            }
-                        }
-                    }
-
-                    childNode = current;
-                    current = childNode.Parent;
-                }
-
-                if (string.IsNullOrEmpty(indent))
-                {
-                    indent = null;
-                }
-            }
-
             Template template;
 
             if (!context.CachedTemplates.TryGetValue(templatePath, out template))
@@ -632,22 +541,20 @@ namespace Scriban.Functions
             // Make sure that we cannot recursively include a template
             object result = null;
             context.EnterRecursive(callerContext);
-
             var previousIndent = context.CurrentIndent;
-            context.CurrentIndent = indent;
+            context.CurrentIndent = null;
             context.PushOutput();
-            var previousArguments = context.GetValue(ScriptVariable.Arguments);
+            var previousArguments = await context.GetValueAsync(ScriptVariable.Arguments).ConfigureAwait(false);
             try
             {
                 context.SetValue(ScriptVariable.Arguments, arguments, true, true);
-
-                if (indent != null)
+                if (previousIndent != null)
                 {
                     // We reset before and after the fact that we have a new line
                     context.ResetPreviousNewLine();
                 }
                 result = await template.RenderAsync(context).ConfigureAwait(false);
-                if (indent != null)
+                if (previousIndent != null)
                 {
                     context.ResetPreviousNewLine();
                 }
@@ -666,7 +573,6 @@ namespace Scriban.Functions
                     context.SetValue(ScriptVariable.Arguments, previousArguments, true);
                 }
             }
-
             return result;
         }
     }
@@ -841,9 +747,26 @@ namespace Scriban.Syntax
     {
         public override async ValueTask<object> EvaluateAsync(TemplateContext context)
         {
-            var valueObject = await context.EvaluateAsync(Value).ConfigureAwait(false);
+            var valueObject = EqualToken.TokenType == TokenType.Equal ? await context.EvaluateAsync(Value).ConfigureAwait(false) : await GetValueToSetAsync(context).ConfigureAwait(false);
             await context.SetValueAsync(Target, valueObject).ConfigureAwait(false);
             return null;
+        }
+
+        private async ValueTask<object> GetValueToSetAsync(TemplateContext context)
+        {
+            var right = await context.EvaluateAsync(Value).ConfigureAwait(false);
+            var left = await context.EvaluateAsync(Target).ConfigureAwait(false);
+            var op = this.EqualToken.TokenType switch
+            {
+                TokenType.PlusEqual => ScriptBinaryOperator.Add,
+                TokenType.MinusEqual => ScriptBinaryOperator.Subtract,
+                TokenType.AsteriskEqual => ScriptBinaryOperator.Multiply,
+                TokenType.DivideEqual => ScriptBinaryOperator.Divide,
+                TokenType.DoubleDivideEqual => ScriptBinaryOperator.DivideRound,
+                TokenType.PercentEqual => ScriptBinaryOperator.Modulus,
+                _ => throw new ScriptRuntimeException(context.CurrentSpan, $"Operator {this.EqualToken} is not a valid compound assignment operator"),
+            };
+            return ScriptBinaryExpression.Evaluate(context, this.Span, op, left, right);
         }
     }
 
@@ -907,35 +830,58 @@ namespace Scriban.Syntax
     {
         public override async ValueTask<object> EvaluateAsync(TemplateContext context)
         {
+            var autoIndent = context.AutoIndent;
             object result = null;
             var statements = Statements;
-            for (int i = 0; i < statements.Count; i++)
+            string previousIndent = context.CurrentIndent;
+            string currentIndent = previousIndent;
+            try
             {
-                var statement = statements[i];
-                // Throws a cancellation
-                context.CheckAbort();
-                if (statement.CanSkipEvaluation)
+                for (int i = 0; i < statements.Count; i++)
                 {
-                    continue;
-                }
+                    var statement = statements[i];
+                    // Throws a cancellation
+                    context.CheckAbort();
+                    if (autoIndent && statement is ScriptEscapeStatement escape)
+                    {
+                        if (escape.IsEntering)
+                        {
+                            currentIndent = escape.Indent;
+                        }
+                        else if (escape.IsClosing)
+                        {
+                            currentIndent = previousIndent;
+                        }
+                    }
 
-                result = await context.EvaluateAsync(statement).ConfigureAwait(false);
-                // Top-level assignment expression don't output anything
-                if (!statement.CanOutput)
-                {
-                    result = null;
-                }
-                else if (result != null && context.FlowState != ScriptFlowState.Return && context.EnableOutput)
-                {
-                    await context.WriteAsync(Span, result).ConfigureAwait(false);
-                    result = null;
-                }
+                    context.CurrentIndent = currentIndent;
+                    if (statement.CanSkipEvaluation)
+                    {
+                        continue;
+                    }
 
-                // If flow state is different, we need to exit this loop
-                if (context.FlowState != ScriptFlowState.None)
-                {
-                    break;
+                    result = await context.EvaluateAsync(statement).ConfigureAwait(false);
+                    // Top-level assignment expression don't output anything
+                    if (!statement.CanOutput)
+                    {
+                        result = null;
+                    }
+                    else if (result != null && context.FlowState != ScriptFlowState.Return && context.EnableOutput)
+                    {
+                        await context.WriteAsync(Span, result).ConfigureAwait(false);
+                        result = null;
+                    }
+
+                    // If flow state is different, we need to exit this loop
+                    if (context.FlowState != ScriptFlowState.None)
+                    {
+                        break;
+                    }
                 }
+            }
+            finally
+            {
+                context.CurrentIndent = previousIndent;
             }
 
             return result;
@@ -1048,31 +994,27 @@ namespace Scriban.Syntax
         protected override async ValueTask<object> EvaluateImplAsync(TemplateContext context)
         {
             var loopIterator = await context.EvaluateAsync(Iterator).ConfigureAwait(false);
-            var list = loopIterator as IList;
-            if (list == null)
-            {
-                var iterator = loopIterator as IEnumerable;
-                if (iterator != null)
-                {
-                    list = new ScriptArray(iterator);
-                }
-            }
-
+            var list = loopIterator as IEnumerable;
             if (list != null)
             {
                 object loopResult = null;
                 object previousValue = null;
-                bool reversed = false;
-                int startIndex = 0;
-                int limit = list.Count;
+                var loopType = loopIterator is System.Linq.IQueryable ? TemplateContext.LoopType.Queryable : TemplateContext.LoopType.Default;
+                //int startIndex = 0;
+                int limit = -1;
+                int continueIndex = 0;
                 if (NamedArguments != null)
                 {
+                    bool reversed = false;
+                    int offset = 0;
+                    var listTyped = System.Linq.Enumerable.Cast<object>(list);
                     foreach (var option in NamedArguments)
                     {
                         switch (option.Name.Name)
                         {
                             case "offset":
-                                startIndex = context.ToInt(option.Value.Span, await context.EvaluateAsync(option.Value).ConfigureAwait(false));
+                                offset = context.ToInt(option.Value.Span, await context.EvaluateAsync(option.Value).ConfigureAwait(false));
+                                continueIndex = offset;
                                 break;
                             case "reversed":
                                 reversed = true;
@@ -1085,58 +1027,75 @@ namespace Scriban.Syntax
                                 break;
                         }
                     }
+
+                    if (offset > 0)
+                    {
+                        listTyped = System.Linq.Enumerable.Skip(listTyped, offset);
+                    }
+
+                    if (reversed)
+                    {
+                        listTyped = System.Linq.Enumerable.Reverse(listTyped);
+                    }
+
+                    if (limit > 0)
+                    {
+                        listTyped = System.Linq.Enumerable.Take(listTyped, limit);
+                    }
+
+                    list = listTyped;
                 }
 
-                var endIndex = Math.Min(limit + startIndex, list.Count) - 1;
-                var index = reversed ? endIndex : startIndex;
-                var dir = reversed ? -1 : 1;
                 bool isFirst = true;
-                int i = 0;
+                int index = 0;
                 await BeforeLoopAsync(context).ConfigureAwait(false);
                 var loopState = CreateLoopState();
-                context.SetValue(GetLoopVariable(context), loopState);
-                loopState.Length = list.Count;
+                context.SetLoopVariable(GetLoopVariable(context), loopState);
+                loopState.SetEnumerable(list);
                 bool enteredLoop = false;
-                while (!reversed && index <= endIndex || reversed && index >= startIndex)
+                var it = list.GetEnumerator();
+                if (it.MoveNext())
                 {
                     enteredLoop = true;
-                    if (!context.StepLoop(this))
+                    while (true)
                     {
-                        return null;
-                    }
+                        if (!context.StepLoop(this, loopType))
+                        {
+                            return null;
+                        }
 
-                    // We update on next run on previous value (in order to handle last)
-                    var value = list[index];
-                    bool isLast = reversed ? index == startIndex : index == endIndex;
-                    loopState.Index = index;
-                    loopState.LocalIndex = i;
-                    loopState.IsLast = isLast;
-                    loopState.ValueChanged = isFirst || !Equals(previousValue, value);
-                    if (Variable is ScriptVariable loopVariable)
-                    {
-                        context.SetLoopVariable(loopVariable, value);
-                    }
-                    else
-                    {
-                        await context.SetValueAsync(Variable, value).ConfigureAwait(false);
-                    }
+                        // We update on next run on previous value (in order to handle last)
+                        var value = it.Current;
+                        bool isLast = !it.MoveNext();
+                        loopState.Index = index;
+                        loopState.IsLast = isLast;
+                        loopState.ValueChanged = isFirst || !Equals(previousValue, value);
+                        if (Variable is ScriptVariable loopVariable)
+                        {
+                            context.SetLoopVariable(loopVariable, value);
+                        }
+                        else
+                        {
+                            await context.SetValueAsync(Variable, value).ConfigureAwait(false);
+                        }
 
-                    loopResult = await LoopItemAsync(context, loopState).ConfigureAwait(false);
-                    if (!ContinueLoop(context))
-                    {
-                        break;
-                    }
+                        loopResult = await LoopItemAsync(context, loopState).ConfigureAwait(false);
+                        if (!ContinueLoop(context) || isLast)
+                        {
+                            break;
+                        }
 
-                    previousValue = value;
-                    isFirst = false;
-                    index += dir;
-                    i++;
+                        previousValue = value;
+                        isFirst = false;
+                        index++;
+                        continueIndex++;
+                    }
                 }
 
                 await AfterLoopAsync(context).ConfigureAwait(false);
                 if (SetContinue)
                 {
-                    context.SetValue(ScriptVariable.Continue, index);
+                    context.SetValue(ScriptVariable.Continue, continueIndex + 1);
                 }
 
                 if (!enteredLoop && Else != null)
@@ -1218,11 +1177,6 @@ namespace Scriban.Syntax
                 }
 
                 var result = await context.EvaluateAsync(Body).ConfigureAwait(false);
-                //if the result of the evaluation was a ScriptRange that depended on local variables
-                //then we need to force the deferred enumerable inside the range to be evaluated right now
-                //before we pop the variables out of the context!
-                if (result is ScriptRange range)
-                    result = new ScriptArray(range);
                 return result;
             }
             finally
@@ -1266,9 +1220,17 @@ namespace Scriban.Syntax
 
             var scriptFunction = functionObject as ScriptFunction;
             var function = functionObject as IScriptCustomFunction;
+            var isPipeCall = processPipeArguments && context.CurrentPipeArguments != null && context.CurrentPipeArguments.Count > 0;
             if (function == null)
             {
-                throw new ScriptRuntimeException(callerContext.Span, $"Invalid target function `{functionObject}` ({context.GetTypeName(functionObject)})");
+                if ((isPipeCall) && (callerContext is ScriptFunctionCall funcCall))
+                {
+                    throw new ScriptRuntimeException(callerContext.Span, $"Pipe expression destination `{funcCall.Target}` is not a valid function ");
+                }
+                else
+                {
+                    throw new ScriptRuntimeException(callerContext.Span, $"Invalid target function `{functionObject}` ({context.GetTypeName(functionObject)})");
+                }
             }
 
             if (function.ParameterCount >= MaximumParameterCount)
@@ -1288,7 +1250,7 @@ namespace Scriban.Syntax
             ScriptArray argumentValues;
             List<ScriptExpression> allArgumentsWithPipe = null;
             // Handle pipe arguments here
-            if (processPipeArguments && context.CurrentPipeArguments != null && context.CurrentPipeArguments.Count > 0)
+            if (isPipeCall)
             {
                 var argCount = Math.Max(function.RequiredParameterCount, 1 + (arguments?.Count ?? 0));
                 allArgumentsWithPipe = context.GetOrCreateListOfScriptExpressions(argCount);
@@ -1546,23 +1508,20 @@ namespace Scriban.Syntax
 
                     index = GetParameterIndexByName(function, argName);
                     // In case of a ScriptFunction, we write the named argument into the ScriptArray directly
-                    if (scriptFunction != null)
+                    if (function.VarParamKind != ScriptVarParamKind.None)
                     {
-                        if (function.VarParamKind != ScriptVarParamKind.None)
+                        if (index >= 0)
                         {
-                            if (index >= 0)
-                            {
-                            }
-                            // We can't add an argument that is "size" for array
-                            else if (argumentValues.CanWrite(argName))
-                            {
-                                argumentValues.TrySetValue(context, callerContext.Span, argName, await context.EvaluateAsync(namedArg).ConfigureAwait(false), false);
-                                continue;
-                            }
-                            else
-                            {
-                                throw new ScriptRuntimeException(argument.Span, $"Cannot pass argument {argName} to function. This name is not supported by this function.");
-                            }
+                        }
+                        // We can't add an argument that is "size" for array
+                        else if (argumentValues.CanWrite(argName))
+                        {
+                            argumentValues.TrySetValue(context, callerContext.Span, argName, await context.EvaluateAsync(namedArg).ConfigureAwait(false), false);
+                            continue;
+                        }
+                        else
+                        {
+                            throw new ScriptRuntimeException(argument.Span, $"Cannot pass argument {argName} to function. This name is not supported by this function.");
                         }
                     }
 
@@ -1650,6 +1609,23 @@ namespace Scriban.Syntax
 #else
     internal
 #endif
+    partial class ScriptIncrementDecrementExpression
+    {
+        public override async ValueTask<object> EvaluateAsync(TemplateContext context)
+        {
+            var increment = this.Operator == ScriptUnaryOperator.Increment ? 1 : -1;
+            var value = Evaluate(context, this.Right.Span, ScriptUnaryOperator.Plus, await context.EvaluateAsync(this.Right).ConfigureAwait(false));
+            var incrementedValue = ScriptBinaryExpression.Evaluate(context, this.Right.Span, ScriptBinaryOperator.Add, value, increment);
+            await context.SetValueAsync(Right, incrementedValue).ConfigureAwait(false);
+            return Post ? value : incrementedValue;
+        }
+    }
+
+#if SCRIBAN_PUBLIC
+    public
+#else
+    internal
+#endif
     partial class ScriptIndexerExpression
     {
         public override async ValueTask<object> EvaluateAsync(TemplateContext context)
@@ -1690,22 +1666,44 @@ namespace Scriban.Syntax
             if (targetObject is IDictionary || (targetObject is IScriptObject && (listAccessor == null || index is string)) || listAccessor == null)
             {
                 var accessor = context.GetMemberAccessor(targetObject);
-                var indexAsString = context.ObjectToString(index);
-                if (setter)
+                if (accessor.HasIndexer)
                 {
-                    if (!accessor.TrySetValue(context, Index.Span, targetObject, indexAsString, valueToSet))
+                    var itemIndex = context.ToObject(Index.Span, index, accessor.IndexType);
+                    if (setter)
                     {
-                        throw new ScriptRuntimeException(Index.Span, $"Cannot set a value for the readonly member `{indexAsString}` in the indexer: {Target}['{indexAsString}']"); // unit test: 130-indexer-accessor-error3.txt
+                        if (!accessor.TrySetItem(context, Index.Span, targetObject, itemIndex, valueToSet))
+                        {
+                            throw new ScriptRuntimeException(Index.Span, $"Cannot set a value for the readonly member `{itemIndex}` in the indexer: {Target}['{itemIndex}']");
+                        }
+                    }
+                    else
+                    {
+                        var result = accessor.TryGetItem(context, Index.Span, targetObject, itemIndex, out value);
+                        if (!context.EnableRelaxedMemberAccess && !result)
+                        {
+                            throw new ScriptRuntimeException(Index.Span, $"Cannot access target `{Target}` with an indexer: {Index}");
+                        }
                     }
                 }
                 else
                 {
-                    if (!accessor.TryGetValue(context, Index.Span, targetObject, indexAsString, out value))
+                    var indexAsString = context.ObjectToString(index);
+                    if (setter)
                     {
-                        var result = context.TryGetMember?.Invoke(context, Index.Span, targetObject, indexAsString, out value) ?? false;
-                        if (!context.EnableRelaxedMemberAccess && !result)
+                        if (!accessor.TrySetValue(context, Index.Span, targetObject, indexAsString, valueToSet))
                         {
-                            throw new ScriptRuntimeException(Index.Span, $"Cannot access target `{Target}` with an indexer: {Index}");
+                            throw new ScriptRuntimeException(Index.Span, $"Cannot set a value for the readonly member `{indexAsString}` in the indexer: {Target}['{indexAsString}']"); // unit test: 130-indexer-accessor-error3.txt
+                        }
+                    }
+                    else
+                    {
+                        if (!accessor.TryGetValue(context, Index.Span, targetObject, indexAsString, out value))
+                        {
+                            var result = context.TryGetMember?.Invoke(context, Index.Span, targetObject, indexAsString, out value) ?? false;
+                            if (!context.EnableRelaxedMemberAccess && !result)
+                            {
+                                throw new ScriptRuntimeException(Index.Span, $"Cannot access target `{Target}` with an indexer: {Index}");
+                            }
                         }
                     }
                 }
@@ -1837,7 +1835,7 @@ namespace Scriban.Syntax
             var targetObject = await context.GetValueAsync(Target).ConfigureAwait(false);
             if (targetObject == null)
             {
-                if (isSet || !context.EnableRelaxedMemberAccess)
+                if (isSet || (context.EnableRelaxedMemberAccess == false && DotToken.TokenType != TokenType.QuestionDot))
                 {
                     throw new ScriptRuntimeException(this.Member.Span, $"Object `{this.Target}` is null. Cannot access member: {this}"); // unit test: 131-member-accessor-error1.txt
                 }
@@ -2117,7 +2115,7 @@ namespace Scriban.Syntax
 
         protected override async ValueTask<object> LoopItemAsync(TemplateContext context, LoopState state)
         {
-            var localIndex = state.LocalIndex;
+            var localIndex = state.Index;
             var columnIndex = localIndex % _columnsCount;
             var tableRowLoopState = (TableRowLoopState)state;
             tableRowLoopState.Col = columnIndex;
@@ -2197,6 +2195,25 @@ namespace Scriban.Syntax
         {
             return await context.GetValueAsync((ScriptExpression)this).ConfigureAwait(false);
         }
+
+        public virtual async ValueTask<object> GetValueAsync(TemplateContext context)
+        {
+            return await context.GetValueAsync(this).ConfigureAwait(false);
+        }
+    }
+
+#if SCRIBAN_PUBLIC
+    public
+#else
+    internal
+#endif
+    partial class ScriptVariableGlobal
+    {
+        public override async ValueTask<object> GetValueAsync(TemplateContext context)
+        {
+            // Used a specialized overrides on contxet for ScriptVariableGlobal
+            return await context.GetValueAsync(this).ConfigureAwait(false);
+        }
     }
 
 #if SCRIBAN_PUBLIC
@@ -2246,7 +2263,6 @@ namespace Scriban.Syntax
                 }
 
                 loopState.Index = index++;
-                loopState.LocalIndex = index;
                 loopState.IsLast = false;
                 result = await LoopItemAsync(context, loopState).ConfigureAwait(false);
                 if (!ContinueLoop(context))

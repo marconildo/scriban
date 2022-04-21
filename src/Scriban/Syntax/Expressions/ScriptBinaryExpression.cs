@@ -99,7 +99,7 @@ namespace Scriban.Syntax
         {
             printer.Write(Left);
             // Because a-b is a variable name, we need to transform binary op a-b to a - b
-            if (Operator == ScriptBinaryOperator.Substract && !printer.PreviousHasSpace)
+            if (Operator == ScriptBinaryOperator.Subtract && !printer.PreviousHasSpace)
             {
                 printer.ExpectSpace();
             }
@@ -113,7 +113,7 @@ namespace Scriban.Syntax
                 printer.ExpectSpace();
             }
 
-            if (Operator == ScriptBinaryOperator.Substract)
+            if (Operator == ScriptBinaryOperator.Subtract)
             {
                 printer.ExpectSpace();
             }
@@ -172,7 +172,7 @@ namespace Scriban.Syntax
                 case ScriptBinaryOperator.CompareGreaterOrEqual:
                 case ScriptBinaryOperator.CompareLessOrEqual:
                 case ScriptBinaryOperator.Add:
-                case ScriptBinaryOperator.Substract:
+                case ScriptBinaryOperator.Subtract:
                 case ScriptBinaryOperator.Multiply:
                 case ScriptBinaryOperator.Divide:
                 case ScriptBinaryOperator.DivideRound:
@@ -273,7 +273,7 @@ namespace Scriban.Syntax
                 case ScriptBinaryOperator.CompareLessOrEqual:
                     return againstEmpty;
                 case ScriptBinaryOperator.Add:
-                case ScriptBinaryOperator.Substract:
+                case ScriptBinaryOperator.Subtract:
                 case ScriptBinaryOperator.Multiply:
                 case ScriptBinaryOperator.Power:
                 case ScriptBinaryOperator.BinaryOr:
@@ -450,7 +450,7 @@ namespace Scriban.Syntax
                         if (context.UseScientific) throw new ScriptRuntimeException(span, $"Both left and right expressions are null. Cannot perform this operation on null values.");
                         return false;
                     case ScriptBinaryOperator.Add:
-                    case ScriptBinaryOperator.Substract:
+                    case ScriptBinaryOperator.Subtract:
                     case ScriptBinaryOperator.Multiply:
                     case ScriptBinaryOperator.Divide:
                     case ScriptBinaryOperator.Power:
@@ -492,7 +492,7 @@ namespace Scriban.Syntax
                         if (context.UseScientific) throw new ScriptRuntimeException(span, $"The {(leftValue == null ? "left" : "right")} expression is null. Cannot perform this operation on a null value.");
                         return false;
                     case ScriptBinaryOperator.Add:
-                    case ScriptBinaryOperator.Substract:
+                    case ScriptBinaryOperator.Subtract:
                     case ScriptBinaryOperator.Multiply:
                     case ScriptBinaryOperator.Divide:
                     case ScriptBinaryOperator.DivideRound:
@@ -575,17 +575,16 @@ namespace Scriban.Syntax
                 return CalculateLong(op, span, leftLong, (long)rightValue);
             }
 
-
-            if (leftType == typeof(long))
+            if (leftType == typeof(ulong))
             {
-                var rightLong = (long)context.ToObject(span, rightValue, typeof(long));
-                return CalculateLong(op, span, (long)leftValue, rightLong);
+                var rightLong = (ulong)context.ToObject(span, rightValue, typeof(ulong));
+                return CalculateLong(op, span, (ulong)leftValue, rightLong);
             }
 
-            if (rightType == typeof(long))
+            if (rightType == typeof(ulong))
             {
-                var leftLong = (long)context.ToObject(span, leftValue, typeof(long));
-                return CalculateLong(op, span, leftLong, (long)rightValue);
+                var leftLong = (ulong)context.ToObject(span, leftValue, typeof(ulong));
+                return CalculateLong(op, span, leftLong, (ulong)rightValue);
             }
 
             if (leftType == typeof(int) || (leftType != null && leftType.IsEnum))
@@ -679,7 +678,7 @@ namespace Scriban.Syntax
             {
                 case ScriptBinaryOperator.Add:
                     return left + right;
-                case ScriptBinaryOperator.Substract:
+                case ScriptBinaryOperator.Subtract:
                     return left - right;
                 case ScriptBinaryOperator.Multiply:
                     return left * right;
@@ -736,6 +735,11 @@ namespace Scriban.Syntax
             return CalculateBigInteger(op, span, new BigInteger(left), new BigInteger(right));
         }
 
+        private static object CalculateLong(ScriptBinaryOperator op, SourceSpan span, ulong left, ulong right)
+        {
+            return CalculateBigInteger(op, span, new BigInteger(left), new BigInteger(right));
+        }
+
         private static object CalculateBigInteger(ScriptBinaryOperator op, SourceSpan span, BigInteger left, BigInteger right)
         {
             return FitToBestInteger(CalculateBigIntegerNoFit(op, span, left, right));
@@ -747,7 +751,7 @@ namespace Scriban.Syntax
             {
                 case ScriptBinaryOperator.Add:
                     return left + right;
-                case ScriptBinaryOperator.Substract:
+                case ScriptBinaryOperator.Subtract:
                     return left - right;
                 case ScriptBinaryOperator.Multiply:
                     return left * right;
@@ -804,7 +808,7 @@ namespace Scriban.Syntax
             {
                 case ScriptBinaryOperator.Add:
                     return left + right;
-                case ScriptBinaryOperator.Substract:
+                case ScriptBinaryOperator.Subtract:
                     return left - right;
                 case ScriptBinaryOperator.Multiply:
                     return left * right;
@@ -846,7 +850,7 @@ namespace Scriban.Syntax
             {
                 case ScriptBinaryOperator.Add:
                     return left + right;
-                case ScriptBinaryOperator.Substract:
+                case ScriptBinaryOperator.Subtract:
                     return left - right;
                 case ScriptBinaryOperator.Multiply:
                     return left * right;
@@ -887,7 +891,7 @@ namespace Scriban.Syntax
             {
                 case ScriptBinaryOperator.Add:
                     return left + right;
-                case ScriptBinaryOperator.Substract:
+                case ScriptBinaryOperator.Subtract:
                     return left - right;
                 case ScriptBinaryOperator.Multiply:
                     return left * right;
@@ -939,7 +943,7 @@ namespace Scriban.Syntax
         {
             switch (op)
             {
-                case ScriptBinaryOperator.Substract:
+                case ScriptBinaryOperator.Subtract:
                     return left - right;
                 case ScriptBinaryOperator.CompareEqual:
                     return left == right;

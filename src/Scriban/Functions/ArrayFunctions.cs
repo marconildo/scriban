@@ -8,6 +8,7 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text;
 using Scriban.Parsing;
 using Scriban.Runtime;
@@ -46,7 +47,7 @@ namespace Scriban.Functions
                 return new ScriptRange { value };
             }
 
-            return list is IList ? (IEnumerable)new ScriptArray(list) {value} : new ScriptRange(list) {value};
+            return list is IList ? (IEnumerable)new ScriptArray(list) { value } : new ScriptRange(list) { value };
         }
 
 
@@ -149,7 +150,7 @@ namespace Scriban.Functions
                 cycleValue = 0;
             }
 
-            var cycleIndex = (int) cycleValue;
+            var cycleIndex = (int)cycleValue;
             cycleIndex = list.Count == 0 ? 0 : cycleIndex % list.Count;
             object result = null;
             if (list.Count > 0)
@@ -182,14 +183,14 @@ namespace Scriban.Functions
         {
             return ApplyFunction(context, span, list, function, EachProcessor);
         }
-        private static IEnumerable EachInternal(TemplateContext context, SourceSpan span, IEnumerable list, IScriptCustomFunction function, Type destType)
+        private static IEnumerable EachInternal(TemplateContext context, ScriptNode callerContext, SourceSpan span, IEnumerable list, IScriptCustomFunction function, Type destType)
         {
             var arg = new ScriptArray(1);
             foreach (var item in list)
             {
                 var itemToTransform = context.ToObject(span, item, destType);
                 arg[0] = itemToTransform;
-                var itemTransformed = ScriptFunctionCall.Call(context, context.CurrentNode, function, arg);
+                var itemTransformed = ScriptFunctionCall.Call(context, callerContext, function, arg);
                 yield return itemTransformed;
             }
         }
@@ -217,16 +218,16 @@ namespace Scriban.Functions
             return ApplyFunction(context, span, list, function, FilterProcessor);
         }
 
-    
-        static IEnumerable FilterInternal(TemplateContext context, SourceSpan span, IEnumerable list, IScriptCustomFunction function, Type destType) 
+
+        static IEnumerable FilterInternal(TemplateContext context, ScriptNode callerContext, SourceSpan span, IEnumerable list, IScriptCustomFunction function, Type destType)
         {
             var arg = new ScriptArray(1);
             foreach (var item in list)
             {
                 var itemToTransform = context.ToObject(span, item, destType);
                 arg[0] = itemToTransform;
-                var itemTransformed = ScriptFunctionCall.Call(context, context.CurrentNode, function, arg);
-                if (context.ToBool(span,itemTransformed))
+                var itemTransformed = ScriptFunctionCall.Call(context, callerContext, function, arg);
+                if (context.ToBool(span, itemTransformed))
                     yield return itemToTransform;
             }
         }
@@ -596,7 +597,7 @@ namespace Scriban.Functions
             var enumerable = list as IEnumerable;
             if (enumerable == null)
             {
-                return new ScriptArray(1) {list};
+                return new ScriptArray(1) { list };
             }
 
             var realList = enumerable.Cast<object>().ToList();
@@ -668,14 +669,29 @@ namespace Scriban.Functions
         public static bool Contains(IEnumerable list, object item)
         {
             foreach (var element in list)
+            {
                 if (element == item || (element != null && element.Equals(item))) return true;
+                if (element is Enum e && CompareEnum(e, item)) return true;
+            }
+
             return false;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        static bool CompareEnum(Enum e, object item)
+        {
+            try
+            {
+                if (item is string s) return Enum.Parse(e.GetType(), s)?.Equals(e) ?? false;
+                return Enum.ToObject(e.GetType(), item)?.Equals(e) ?? false;
+            }
+            catch { return false; }
         }
 
         /// <summary>
         /// Delegate type for function used to process a list
         /// </summary>
-        private delegate IEnumerable ListProcessor(TemplateContext context, SourceSpan span, IEnumerable list, IScriptCustomFunction function, Type destType);
+        private delegate IEnumerable ListProcessor(TemplateContext context, ScriptNode callerContext, SourceSpan span, IEnumerable list, IScriptCustomFunction function, Type destType);
 
 
         /// <summary>
@@ -696,7 +712,9 @@ namespace Scriban.Functions
                 throw new ArgumentException($"The parameter `{function}` is not a function. Maybe prefix it with @?", nameof(function));
             }
 
-            return new ScriptRange(impl(context, span, list, scriptingFunction, scriptingFunction.GetParameterInfo(0).ParameterType));
+            var callerContext = context.CurrentNode;
+
+            return new ScriptRange(impl(context, callerContext, span, list, scriptingFunction, scriptingFunction.GetParameterInfo(0).ParameterType));
         }
 
         private class CycleKey : IEquatable<CycleKey>
@@ -720,7 +738,7 @@ namespace Scriban.Functions
                 if (ReferenceEquals(null, obj)) return false;
                 if (ReferenceEquals(this, obj)) return true;
                 if (obj.GetType() != this.GetType()) return false;
-                return Equals((CycleKey) obj);
+                return Equals((CycleKey)obj);
             }
 
             public override int GetHashCode()

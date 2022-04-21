@@ -4,11 +4,9 @@
 
 #nullable disable
 
-using System;
 using System.Collections;
-using System.Collections.Generic;
 using System.Threading.Tasks;
-using Scriban.Runtime;
+using System;
 
 namespace Scriban.Syntax
 {
@@ -101,32 +99,31 @@ namespace Scriban.Syntax
         protected override object EvaluateImpl(TemplateContext context)
         {
             var loopIterator = context.Evaluate(Iterator);
-            var list = loopIterator as IList;
-            if (list == null)
-            {
-                var iterator = loopIterator as IEnumerable;
-                if (iterator != null)
-                {
-                    list = new ScriptArray(iterator);
-                }
-            }
+            var list = loopIterator as IEnumerable;
 
             if (list != null)
             {
                 object loopResult = null;
                 object previousValue = null;
+                var loopType = loopIterator is System.Linq.IQueryable ? TemplateContext.LoopType.Queryable : TemplateContext.LoopType.Default;
 
-                bool reversed = false;
-                int startIndex = 0;
-                int limit = list.Count;
+                //int startIndex = 0;
+                int limit = -1;
+                int continueIndex = 0;
                 if (NamedArguments != null)
                 {
+                    bool reversed = false;
+                    int offset = 0;
+
+                    var listTyped = System.Linq.Enumerable.Cast<object>(list);
                     foreach (var option in NamedArguments)
                     {
                         switch (option.Name.Name)
                         {
                             case "offset":
-                                startIndex = context.ToInt(option.Value.Span, context.Evaluate(option.Value));
+
+                                offset = context.ToInt(option.Value.Span, context.Evaluate(option.Value));
+                                continueIndex = offset;
                                 break;
                             case "reversed":
                                 reversed = true;
@@ -139,61 +136,78 @@ namespace Scriban.Syntax
                                 break;
                         }
                     }
-                }
-                var endIndex = Math.Min(limit + startIndex, list.Count) - 1;
 
-                var index = reversed ? endIndex : startIndex;
-                var dir = reversed ? -1 : 1;
+                    if (offset > 0)
+                    {
+                        listTyped = System.Linq.Enumerable.Skip(listTyped, offset);
+                    }
+
+                    if (reversed)
+                    {
+                        listTyped = System.Linq.Enumerable.Reverse(listTyped);
+                    }
+
+                    if (limit > 0)
+                    {
+                        listTyped = System.Linq.Enumerable.Take(listTyped, limit);
+                    }
+
+                    list = listTyped;
+                }
+
                 bool isFirst = true;
-                int i = 0;
+                int index = 0;
                 BeforeLoop(context);
 
                 var loopState = CreateLoopState();
-                context.SetValue(GetLoopVariable(context), loopState);
-                loopState.Length = list.Count;
+                context.SetLoopVariable(GetLoopVariable(context), loopState);
+                loopState.SetEnumerable(list);
 
                 bool enteredLoop = false;
-                while (!reversed && index <= endIndex || reversed && index >= startIndex)
+                var it = list.GetEnumerator();
+                if (it.MoveNext())
                 {
                     enteredLoop = true;
-                    if (!context.StepLoop(this))
+                    while (true)
                     {
-                        return null;
-                    }
+                        if (!context.StepLoop(this, loopType))
+                        {
+                            return null;
+                        }
 
-                    // We update on next run on previous value (in order to handle last)
-                    var value = list[index];
-                    bool isLast = reversed ? index == startIndex : index == endIndex;
-                    loopState.Index = index;
-                    loopState.LocalIndex = i;
-                    loopState.IsLast = isLast;
-                    loopState.ValueChanged = isFirst || !Equals(previousValue, value);
+                        // We update on next run on previous value (in order to handle last)
+                        var value = it.Current;
+                        bool isLast = !it.MoveNext();
+                        loopState.Index = index;
+                        loopState.IsLast = isLast;
+                        loopState.ValueChanged = isFirst || !Equals(previousValue, value);
 
-                    if (Variable is ScriptVariable loopVariable)
-                    {
-                        context.SetLoopVariable(loopVariable, value);
-                    }
-                    else
-                    {
-                        context.SetValue(Variable, value);
-                    }
+                        if (Variable is ScriptVariable loopVariable)
+                        {
+                            context.SetLoopVariable(loopVariable, value);
+                        }
+                        else
+                        {
+                            context.SetValue(Variable, value);
+                        }
 
-                    loopResult = LoopItem(context, loopState);
-                    if (!ContinueLoop(context))
-                    {
-                        break;
-                    }
+                        loopResult = LoopItem(context, loopState);
+                        if (!ContinueLoop(context) || isLast)
+                        {
+                            break;
+                        }
 
-                    previousValue = value;
-                    isFirst = false;
-                    index += dir;
-                    i++;
+                        previousValue = value;
+                        isFirst = false;
+                        index++;
+                        continueIndex++;
+                    }
                 }
                 AfterLoop(context);
 
                 if (SetContinue)
                 {
-                    context.SetValue(ScriptVariable.Continue, index);
+                    context.SetValue(ScriptVariable.Continue, continueIndex + 1);
                 }
 
                 if (!enteredLoop && Else != null)
