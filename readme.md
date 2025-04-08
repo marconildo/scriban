@@ -1,8 +1,10 @@
-# scriban [![Build Status](https://github.com/scriban/scriban/workflows/ci/badge.svg?branch=master)](https://github.com/scriban/scriban/actions) [![Coverage Status](https://coveralls.io/repos/github/scriban/scriban/badge.svg?branch=master)](https://coveralls.io/github/scriban/scriban?branch=master) [![NuGet](https://img.shields.io/nuget/v/Scriban.svg)](https://www.nuget.org/packages/Scriban/)
+# scriban [![ci](https://github.com/scriban/scriban/actions/workflows/CI.yml/badge.svg)](https://github.com/scriban/scriban/actions/workflows/CI.yml) [![Coverage Status](https://coveralls.io/repos/github/scriban/scriban/badge.svg?branch=master)](https://coveralls.io/github/scriban/scriban?branch=master) [![NuGet](https://img.shields.io/nuget/v/Scriban.svg)](https://www.nuget.org/packages/Scriban/)
 
 <img align="right" width="160px" height="160px" src="img/scriban.png">
 
 Scriban is a fast, powerful, safe and lightweight scripting language and engine for .NET, which was primarily developed for text templating with a compatibility mode for parsing `liquid` templates.
+
+Today, not only Scriban can be used in text templating scenarios, but also can be integrated as a **general scripting engine**: For example, Scriban is at the core of the scripting engine for [kalk](https://github.com/xoofx/kalk), a command line calculator application for developers.
 
 ```C#
 // Parse a scriban template
@@ -61,7 +63,8 @@ Scriban can also be used in pure scripting context without templating (`{{` and 
   
 ## Features
 
-- Very **efficient**, **fast** parser and a **lightweight** runtime. CPU and Garbage Collector friendly. Check the [benchmarks](https://github.com/scriban/scriban/blob/master/doc/benchmarks.md) for more details.
+- An **extensible sandbox execution model**: You have the full control about which Scripting objects (and so properties and methods) are accessible from Scriban templates.
+- Very **efficient**, **fast** parser and a **lightweight** runtime. CPU and Garbage Collector friendly.
 - Powered by a Lexer/Parser providing a **full Abstract Syntax Tree, fast, versatile and robust**, more efficient than regex based parsers.
   - Precise source code location (path, column and line) for error reporting
   - **Write an AST to a script textual representation**, with [`Template.ToText`](https://github.com/scriban/scriban/blob/master/doc/runtime.md#ast-to-text), allowing to manipulate scripts in memory and re-save them to the disk, useful for **roundtrip script update scenarios**
@@ -100,7 +103,7 @@ You can install the [Scriban Extension for Visual Studio Code](https://marketpla
 * See the [Built-in functions](https://github.com/scriban/scriban/blob/master/doc/builtins.md) document for the list of the built-in functions.
 * See the [Runtime](https://github.com/scriban/scriban/blob/master/doc/runtime.md) document for a description of the .NET runtime API to compile and run templates.
 * See the [Liquid support](https://github.com/scriban/scriban/blob/master/doc/liquid-support.md) document for more details about the support of liquid templates.
-* See my blog post "[Implementing a Text Templating Engine for .NET](http://xoofx.com/blog/2017/11/13/implementing-a-text-templating-language-and-engine-for-dotnet/)" for some behind the scene details.
+* See my blog post "[Implementing a Text Templating Engine for .NET](https://xoofx.github.io/blog/2017/11/13/implementing-a-text-templating-language-and-engine-for-dotnet/)" for some behind the scene details.
 
 ## Binaries
 
@@ -146,10 +149,6 @@ If you are targeting `netstandard2.0` or `.NET Framework 4.7.2+`, in order to co
 > 
 > You should see a Scriban folder and empty subfolders in your project. This is an issue with Visual Studio 2019 16.8.x (and before) and it will be fixed in VS 2019 16.9+
 
-## Benchmarks
-
-**Scriban is blazing fast**! For more details, you can check the [benchmarks document](https://github.com/scriban/scriban/blob/master/doc/benchmarks.md).
-
 ## License
 
 This software is released under the [BSD-Clause 2 license](https://opensource.org/licenses/BSD-2-Clause). 
@@ -167,10 +166,17 @@ This software is released under the [BSD-Clause 2 license](https://opensource.or
 
 * (https://scribanonline.azurewebsites.net/): ASP.NET Core Sample.
 
+## Sponsors
+
+Supports this project with a monthly donation and help me continue improving it. \[[Become a sponsor](https://github.com/sponsors/xoofx)\]
+
+[<img src="https://github.com/lilith.png?size=200" width="64px;" style="border-radius: 50%" alt="lilith"/>](https://github.com/lilith) Lilith River, author of [Imageflow Server, an easy on-demand
+image editing, optimization, and delivery server](https://github.com/imazen/imageflow-server)
+
 ## Credits
 
 Adapted logo `Puzzle` by [Andrew Doane](https://thenounproject.com/andydoane/) from the Noun Project
 
 ## Author
 
-Alexandre Mutel aka [xoofx](http://xoofx.com).
+Alexandre Mutel aka [xoofx](https://xoofx.github.io).

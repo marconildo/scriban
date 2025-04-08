@@ -228,6 +228,36 @@ A `ScriptObject` is mainly an extended version of a `IDictionary<string, object>
 
 Note that any `IDictionary<string, object>` put as a property will be accessible as well.
 
+#### Imports System.Text.Json.JsonElement
+
+A `ScriptObject` or `ScriptArray` can import `JsonElement`.
+
+```C#
+  // objects with ScriptObject
+  JsonElement json = JsonSerializer.Deserialize<JsonElement>("""{ "foo": "bar" }""");
+  var model = ScriptObject.From(json);
+
+  // arrays with ScriptArray
+  JsonElement json = JsonSerializer.Deserialize<JsonElement>("""[1, 2, 3]""");
+  var model = ScriptArray.From(json);
+
+  // import to an existing object
+  var model = new ScriptObject();
+  model.Import(jsonElement);
+
+  // add to an existing object
+  var model = new ScriptObject();
+  model.Add("foo", jsonElement);
+
+  // render using JsonElement directly
+  JsonElement model = JsonSerializer.Deserialize<JsonElement>("""{ "foo": "bar" }""");
+  var template = Template.Parse("foo: `{{foo}}`");
+  var result = template.Render(model);
+  // Prints: foo: `bar`
+```
+
+**Note**: JsonElement is also supported in properties of custom classes and structs.
+
 #### Imports a .NET delegate
 
 Via `ScriptObject.Import(member, Delegate)`. Here we import a `Func<string>`:
@@ -585,6 +615,48 @@ For example, the following code adds a new property `myprop` to the builtin obje
 ```
 
 Because scriban allows you to define new functions directly into the language and also allow to store a function pointer by using the alias `@` operator, you can basically extend an existing object with both properties and functions.
+#### Accessing Variables anywhere in the stack from a function
+
+To access a variable at any point in the stack from a function, use `context.GetValue()`.
+
+```C#
+public virtual object Invoke(TemplateContext context, ScriptNode callerContext, ScriptArray arguments, ScriptBlockStatement blockStatement)
+{
+    // var1 defined in scriptObject pushed to global anywhere down the stack
+    ScriptVariableGlobal scriptVariableGlobal = new ScriptVariableGlobal("var1");
+
+    object contextObject = context.GetValue(scriptVariableGlobal);
+
+    string var1Value = "";
+    // cast to the correct type
+    if (contextObject != null) {
+        var1Value = (string)contextObject;
+    }
+
+    return $"var1 is {var1Value}";
+}
+```
+
+
+#### Accessing a variable only in the current global from a function
+
+To access a variable from _only_ the top of the global stack from a function, use `context.CurrentGlobal.TryGetValue()`.
+
+```C#
+public virtual object Invoke(TemplateContext context, ScriptNode callerContext, ScriptArray arguments, ScriptBlockStatement blockStatement)
+{
+    // var1 defined in scriptObject pushed to only the top level of the global stack
+    context.CurrentGlobal.TryGetValue(context, span, key, out object contextObject);
+
+    string var1Value = "";
+    // cast to the correct type
+    if (contextObject != null) {
+        var1Value = (string)contextObject;
+    }
+
+    return $"var1 is {var1Value}";
+}
+```
 
 #### The `with` statement with the stack
 

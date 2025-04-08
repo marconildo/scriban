@@ -14,6 +14,7 @@ using System.Reflection;
 using System.Runtime.CompilerServices;
 using System.Text;
 using System.Threading;
+using System.Threading.Tasks;
 using Scriban.Functions;
 using Scriban.Helpers;
 using Scriban.Parsing;
@@ -63,6 +64,7 @@ namespace Scriban
         private FastStack<Dictionary<object, object>> _availableTags;
         private ScriptPipeArguments _currentPipeArguments;
         private bool _previousTextWasNewLine;
+        private readonly IEqualityComparer<string> _keyComparer;
 
         internal bool AllowPipeArguments => _getOrSetValueLevel <= 1;
 
@@ -104,7 +106,7 @@ namespace Scriban
         /// <summary>
         /// Initializes a new instance of the <see cref="T:Scriban.TemplateContext" /> class.
         /// </summary>
-        public TemplateContext() : this(null)
+        public TemplateContext() : this(null, null)
         {
         }
 
@@ -112,7 +114,24 @@ namespace Scriban
         /// Initializes a new instance of the <see cref="TemplateContext" /> class.
         /// </summary>
         /// <param name="builtin">The builtin object used to expose builtin functions, default is <see cref="GetDefaultBuiltinObject"/>.</param>
-        public TemplateContext(ScriptObject builtin)
+        public TemplateContext(ScriptObject builtin) : this(builtin, null)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="TemplateContext" /> class.
+        /// </summary>
+        /// <param name="keyComparer">Comparer to use when looking up members</param>
+        public TemplateContext(IEqualityComparer<string> keyComparer) : this(null, keyComparer)
+        {
+        }
+
+        /// <summary>
+        /// Initializes a new instance of the <see cref="TemplateContext" /> class.
+        /// </summary>
+        /// <param name="builtin">The builtin object used to expose builtin functions, default is <see cref="GetDefaultBuiltinObject"/>.</param>
+        /// <param name="keyComparer">Comparer to use when looking up members</param>
+        public TemplateContext(ScriptObject builtin, IEqualityComparer<string> keyComparer)
         {
             BuiltinObject = builtin ?? GetDefaultBuiltinObject();
             EnableOutput = true;
@@ -122,10 +141,11 @@ namespace Scriban
             EnableRelaxedFunctionAccess = false;
             EnableRelaxedIndexerAccess = true;
             AutoIndent = true;
+            IndentOnEmptyLines = true;
             LoopLimit = 1000;
             RecursiveLimit = 100;
             LimitToString = 0;
-            ObjectRecursionLimit=0;
+            ObjectRecursionLimit = 0;
             MemberRenamer = StandardMemberRenamer.Default;
 
             RegexTimeOut = TimeSpan.FromSeconds(10);
@@ -133,7 +153,11 @@ namespace Scriban
             TemplateLoaderParserOptions = new ParserOptions();
             TemplateLoaderLexerOptions = LexerOptions.Default;
 
+#pragma warning disable RS1035 // Do not use APIs banned for analyzers - https://github.com/dotnet/linker/issues/3197 / https://github.com/dotnet/roslyn-analyzers/issues/6467
+#pragma warning disable RS1036
             NewLine = Environment.NewLine;
+#pragma warning restore RS1036
+#pragma warning restore RS1035
 
             Language = ScriptLang.Default;
 
@@ -163,6 +187,9 @@ namespace Scriban
             _pipeArguments = new FastStack<ScriptPipeArguments>(4);
             _availableScriptExpressionLists = new FastStack<List<ScriptExpression>>(4);
             _availableReflectionArguments = new object[ScriptFunctionCall.MaximumParameterCount + 1][];
+
+            _keyComparer = keyComparer;
+
             for (int i = 0; i < _availableReflectionArguments.Length; i++)
             {
                 _availableReflectionArguments[i] = new object[i];
@@ -191,11 +218,16 @@ namespace Scriban
         /// Gets a boolean if the context is being used  with liquid
         /// </summary>
         public bool IsLiquid { get; protected set; }
-        
+
         /// <summary>
         /// If sets to <c>true</c>, the include statement will maintain the indent.
         /// </summary>
         public bool AutoIndent { get; set; }
+
+        /// <summary>
+        /// If set to <c>true</c>, empty lines will maintain the indent.
+        /// </summary>
+        public bool IndentOnEmptyLines { get; set; }
 
         /// <summary>
         /// If sets to <c>true</c>, the include statement will maintain the indent.
@@ -347,7 +379,7 @@ namespace Scriban
         /// Gets the number of <see cref="PushOutput()"/> that are pushed to this context.
         /// </summary>
         public int OutputCount => _outputs.Count;
-        
+
         /// <summary>
         /// Gets the number of <see cref="PushCulture"/> that are pushed to this context.
         /// </summary>
@@ -481,7 +513,7 @@ namespace Scriban
 
         internal List<ScriptExpression> GetOrCreateListOfScriptExpressions(int capacity)
         {
-            var list  = _availableScriptExpressionLists.Count > 0 ? _availableScriptExpressionLists.Pop() : new List<ScriptExpression>();
+            var list = _availableScriptExpressionLists.Count > 0 ? _availableScriptExpressionLists.Pop() : new List<ScriptExpression>();
             if (capacity > list.Capacity) list.Capacity = capacity;
             return list;
         }
@@ -499,13 +531,13 @@ namespace Scriban
             // Don't try to allocate more than we can allocate
             if (length >= _availableReflectionArguments.Length) return new object[length];
 
-           var reflectionArguments =  _availableReflectionArguments[length] ?? new object[length];
-           if (length > 0)
-           {
-               _availableReflectionArguments[length] = (object[])reflectionArguments[0];
-               reflectionArguments[0] = null;
-           }
-           return reflectionArguments;
+            var reflectionArguments = _availableReflectionArguments[length] ?? new object[length];
+            if (length > 0)
+            {
+                _availableReflectionArguments[length] = (object[])reflectionArguments[0];
+                reflectionArguments[0] = null;
+            }
+            return reflectionArguments;
         }
 
         internal void ReleaseReflectionArguments(object[] reflectionArguments)
@@ -720,28 +752,38 @@ namespace Scriban
 
                     while (index < indexEnd)
                     {
+                        var newLineIndex = text.IndexOf('\n', index);
+                        if (newLineIndex < 0 || newLineIndex >= indexEnd)
+                        {
+                            // Write indents if necessary
+                            if (_previousTextWasNewLine)
+                            {
+                                Output.Write(CurrentIndent, 0, CurrentIndent.Length);
+                                _previousTextWasNewLine = false;
+                            }
+                            Output.Write(text, index, indexEnd - index);
+                            break;
+                        }
+
+                        var length = newLineIndex - index;
                         // Write indents if necessary
-                        if (_previousTextWasNewLine)
+                        if (_previousTextWasNewLine && (IndentOnEmptyLines || length != 0 && (length != 1 || text[index] != '\r')))
                         {
                             Output.Write(CurrentIndent, 0, CurrentIndent.Length);
                             _previousTextWasNewLine = false;
                         }
 
-                        var newLineIndex = text.IndexOf('\n', index);
-                        if (newLineIndex < 0 || newLineIndex >= indexEnd)
-                        {
-                            Output.Write(text, index, indexEnd - index);
-                            break;
-                        }
-
                         // We output the new line
-                        Output.Write(text, index, newLineIndex - index + 1);
+                        Output.Write(text, index, length + 1);
                         index = newLineIndex + 1;
                         _previousTextWasNewLine = true;
                     }
                 }
                 else
                 {
+                    if(count > 0){
+                        _previousTextWasNewLine = text[startIndex + count - 1] == '\n';
+                    }
                     Output.Write(text, startIndex, count);
                 }
             }
@@ -895,7 +937,7 @@ namespace Scriban
             }
             else
             {
-                accessor = new TypedObjectAccessor(type, MemberFilter, MemberRenamer);
+                accessor = new TypedObjectAccessor(type, _keyComparer, MemberFilter, MemberRenamer);
             }
             return accessor;
         }
@@ -1007,7 +1049,7 @@ namespace Scriban
             Queryable
         }
 
-        internal bool StepLoop(ScriptLoopStatementBase loop, LoopType loopType = LoopType.Default )
+        internal bool StepLoop(ScriptLoopStatementBase loop, LoopType loopType = LoopType.Default)
         {
             Debug.Assert(_loops.Count > 0);
 
@@ -1099,7 +1141,7 @@ namespace Scriban
                     throw new ScriptRuntimeException(targetExpression.Span, $"Unsupported target expression for assignment."); // unit test: 105-assign-error1.txt
                 }
             }
-            catch (Exception readonlyException) when(_getOrSetValueLevel == 1 && !(readonlyException is ScriptRuntimeException))
+            catch (Exception readonlyException) when (_getOrSetValueLevel == 1 && !(readonlyException is ScriptRuntimeException))
             {
                 throw new ScriptRuntimeException(targetExpression.Span, $"Unexpected exception while accessing target expression: {readonlyException.Message}", readonlyException);
             }
@@ -1162,9 +1204,126 @@ namespace Scriban
             return null;
         }
 
-        internal void ResetPreviousNewLine()
+        public void ResetPreviousNewLine()
         {
             _previousTextWasNewLine = false;
+        }
+
+        public virtual string GetTemplatePathFromName(string templateName, ScriptNode callerContext)
+        {
+            // If template name is empty, throw an exception
+            if (string.IsNullOrEmpty(templateName))
+            {
+                throw new ScriptRuntimeException(callerContext.Span, $"Include template name cannot be null or empty");
+            }
+
+            return ConvertTemplateNameToPath(templateName, callerContext);
+        }
+
+        protected string ConvertTemplateNameToPath(string templateName, ScriptNode callerContext)
+        {
+            if (TemplateLoader == null)
+            {
+                throw new ScriptRuntimeException(callerContext.Span, $"Unable to include <{templateName}>. No TemplateLoader registered in TemplateContext.TemplateLoader");
+            }
+
+            string templatePath;
+
+            try
+            {
+                templatePath = TemplateLoader.GetPath(this, callerContext.Span, templateName);
+            }
+            catch (Exception ex) when (!(ex is ScriptRuntimeException))
+            {
+                throw new ScriptRuntimeException(callerContext.Span, $"Unexpected exception while getting the path for the include name `{templateName}`", ex);
+            }
+            // If template path is empty (probably because template doesn't exist), throw an exception
+            if (templatePath == null)
+            {
+                throw new ScriptRuntimeException(callerContext.Span, $"Include template path is null for `{templateName}");
+            }
+
+            return templatePath;
+        }
+
+        public Template GetOrCreateTemplate(string templatePath, ScriptNode callerContext)
+        {
+            if (!CachedTemplates.TryGetValue(templatePath, out var template))
+            {
+                template = CreateTemplate(templatePath, callerContext);
+                CachedTemplates[templatePath] = template;
+            }
+            return template;
+        }
+
+        protected virtual Template CreateTemplate(string templatePath, ScriptNode callerContext)
+        {
+            string templateText;
+            try
+            {
+                templateText = TemplateLoader.Load(this, callerContext.Span, templatePath);
+            }
+            catch (Exception ex) when (!(ex is ScriptRuntimeException))
+            {
+                throw new ScriptRuntimeException(callerContext.Span, $"Unexpected exception while creating template from path `{templatePath}`", ex);
+            }
+
+            if (templateText == null)
+            {
+                throw new ScriptRuntimeException(callerContext.Span, $"The result of including `{templatePath}` cannot be null");
+            }
+
+            var template = Template.Parse(templateText, templatePath, TemplateLoaderParserOptions, TemplateLoaderLexerOptions);
+
+            // If the template has any errors, throw an exception
+            if (template.HasErrors)
+            {
+                throw new ScriptParserRuntimeException(callerContext.Span, $"Error while parsing template `{templatePath}`", template.Messages);
+            }
+
+            CachedTemplates.Add(templatePath, template);
+
+            return template;
+        }
+    
+        public string RenderTemplate(Template template, ScriptArray arguments, ScriptNode callerContext)
+        {
+            // Make sure that we cannot recursively include a template
+            string result = null;
+            EnterRecursive(callerContext);
+            var previousIndent = CurrentIndent;
+            CurrentIndent = null;
+            PushOutput();
+            var previousArguments = GetValue(ScriptVariable.Arguments);
+            try
+            {
+                SetValue(ScriptVariable.Arguments, arguments, true, true);
+                if (previousIndent != null)
+                {
+                    // We reset before and after the fact that we have a new line
+                    ResetPreviousNewLine();
+                }
+                result = template.Render(this);
+                if (previousIndent != null)
+                {
+                    ResetPreviousNewLine();
+                }
+            }
+            finally
+            {
+                PopOutput();
+                CurrentIndent = previousIndent;
+                ExitRecursive(callerContext);
+
+                // Remove the arguments
+                DeleteValue(ScriptVariable.Arguments);
+                if (previousArguments != null)
+                {
+                    // Restore them if necessary
+                    SetValue(ScriptVariable.Arguments, previousArguments, true);
+                }
+            }
+            return result;
         }
     }
 
@@ -1186,9 +1345,20 @@ namespace Scriban
             EnableBreakAndContinueAsReturnOutsideLoop = true;
             EnableRelaxedTargetAccess = true;
 
-            TemplateLoaderLexerOptions = new LexerOptions() {Lang = ScriptLang.Liquid};
-            TemplateLoaderParserOptions = new ParserOptions() {LiquidFunctionsToScriban = true};
+            TemplateLoaderLexerOptions = new LexerOptions() { Lang = ScriptLang.Liquid };
+            TemplateLoaderParserOptions = new ParserOptions() { LiquidFunctionsToScriban = true };
             IsLiquid = true;
+        }
+
+        public override string GetTemplatePathFromName(string templateName, ScriptNode callerContext)
+        {
+            // If template name is empty, throw an exception
+            if (string.IsNullOrEmpty(templateName))
+            {
+                return null;
+            }
+
+            return ConvertTemplateNameToPath(templateName, callerContext);
         }
     }
 }

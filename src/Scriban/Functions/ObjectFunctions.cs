@@ -8,12 +8,18 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Globalization;
+using System.IO;
 using System.Reflection;
+using System.Text;
 using Scriban.Helpers;
 using Scriban.Parsing;
 using Scriban.Runtime;
 using Scriban.Runtime.Accessors;
 using Scriban.Syntax;
+
+#if NET7_0_OR_GREATER
+using System.Text.Json;
+#endif
 
 namespace Scriban.Functions
 {
@@ -70,7 +76,13 @@ namespace Scriban.Functions
                 try
                 {
                     var template = Template.Parse(templateStr, lexerOptions: new LexerOptions() { Lang = context.Language, Mode = ScriptMode.ScriptOnly });
-                    return context.Evaluate(template.Page);
+                    if (template.HasErrors)
+                    {
+                        throw new ScriptRuntimeException(span, template.Messages.ToString());
+                    }
+
+                    var result = template.Page.Body.Statements.Count == 1 ? context.Evaluate(template.Page.Body.Statements[0]) : context.Evaluate(template.Page);
+                    return result;
                 }
                 catch (Exception ex)
                 {
@@ -424,5 +436,102 @@ namespace Scriban.Functions
             }
             return scriptArray;
         }
+
+#if NET7_0_OR_GREATER
+        /// <summary>
+        /// Converts the json to a scriban value. Object, Array, string, etc. Only available in net7.0+
+        /// </summary>
+        /// <param name="context">The template context</param>
+        /// <param name="json">The json to deserialize.</param>
+        /// <returns>Returns the scriban value</returns>
+        /// <remarks>
+        /// ```scriban-html
+        /// {{
+        ///    obj = `{ "foo": 123 }` | object.from_json
+        ///    obj.foo
+        /// }}
+        /// ```
+        /// ```html
+        /// 123
+        /// ```
+        /// </remarks>
+        public static object FromJson(TemplateContext context, string json)
+        {
+            return JsonSerializer.Deserialize<JsonElement>(json).ToScriban();
+        }
+
+        /// <summary>
+        /// Converts the scriban value to JSON. Only available in net7.0+
+        /// </summary>
+        /// <param name="context">The template context</param>
+        /// <param name="value">The input object.</param>
+        /// <returns>A JSON representation of the value</returns>
+        /// <remarks>
+        /// ```scriban-html
+        /// {{ { foo: "bar", baz: [1, 2, 3] } | object.to_json }}
+        /// {{ true | object.to_json }}
+        /// {{ null | object.to_json }}
+        /// ```
+        /// ```html
+        /// {"foo":"bar","baz":[1,2,3]}
+        /// true
+        /// null
+        /// ```
+        /// </remarks>
+        public static string ToJson(TemplateContext context, object value)
+        {
+            if (value is IScriptCustomFunction) {
+                throw new ArgumentOutOfRangeException(nameof(value), "Can not serialize functions to JSON.");
+            }
+
+            var writerOptions = new JsonWriterOptions { Indented = false };
+
+            using var stream = new MemoryStream();
+            var writer = new Utf8JsonWriter(stream, writerOptions);
+
+            WriteValue(context, writer, value);
+            writer.Flush();
+
+            var json = Encoding.UTF8.GetString(stream.ToArray());
+            return json;
+
+            static void WriteValue(TemplateContext context, Utf8JsonWriter writer, object value)
+            {
+                var type = value?.GetType() ?? typeof(object);
+                if (
+                    value is null ||
+                    value is string ||
+                    value is bool ||
+                    type.IsPrimitiveOrDecimal() ||
+                    value is IFormattable // handles types like System.DateTime and 99 more types. see: https://learn.microsoft.com/en-us/dotnet/api/system.iformattable?view=net-8.0
+                )
+                {
+                    JsonSerializer.Serialize(writer, value, type);
+                }
+                else if (value is IList || type.IsArray) {
+                    writer.WriteStartArray();
+                    foreach (var x in context.ToList(context.CurrentSpan, value))
+                    {
+                        WriteValue(context, writer, x);
+                    }
+                    writer.WriteEndArray();
+                }
+                else {
+                    writer.WriteStartObject();
+                    var accessor = context.GetMemberAccessor(value);
+                    foreach (var member in accessor.GetMembers(context, context.CurrentSpan, value))
+                    {
+                        if (accessor.TryGetValue(context, context.CurrentSpan, value, member, out var memberValue))
+                        {
+                            writer.WritePropertyName(member);
+                            WriteValue(context, writer, memberValue);
+                        }
+                    }
+                    writer.WriteEndObject();
+                }
+            }
+        }
+#endif
+
     }
 }

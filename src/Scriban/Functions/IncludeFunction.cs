@@ -34,110 +34,13 @@ namespace Scriban.Functions
             }
 
             var templateName = context.ObjectToString(arguments[0]);
+            var templatePath = context.GetTemplatePathFromName(templateName, callerContext);
+            // liquid compatibility
+            if (templatePath == null) return null;
 
-            // If template name is empty, throw an exception
-            if (string.IsNullOrEmpty(templateName))
-            {
-                // In a liquid template context, we let an include to continue without failing
-                if (context is LiquidTemplateContext)
-                {
-                    return null;
-                }
-                throw new ScriptRuntimeException(callerContext.Span, $"Include template name cannot be null or empty");
-            }
+            Template template = context.GetOrCreateTemplate(templatePath, callerContext);
 
-            var templateLoader = context.TemplateLoader;
-            if (templateLoader == null)
-            {
-                throw new ScriptRuntimeException(callerContext.Span, $"Unable to include <{templateName}>. No TemplateLoader registered in TemplateContext.TemplateLoader");
-            }
-
-            string templatePath;
-
-            try
-            {
-                templatePath = templateLoader.GetPath(context, callerContext.Span, templateName);
-            }
-            catch (Exception ex) when (!(ex is ScriptRuntimeException))
-            {
-                throw new ScriptRuntimeException(callerContext.Span, $"Unexpected exception while getting the path for the include name `{templateName}`", ex);
-            }
-            // If template path is empty (probably because template doesn't exist), throw an exception
-            if (templatePath == null)
-            {
-                throw new ScriptRuntimeException(callerContext.Span, $"Include template path is null for `{templateName}");
-            }
-
-            Template template;
-
-            if (!context.CachedTemplates.TryGetValue(templatePath, out template))
-            {
-
-                string templateText;
-                try
-                {
-                    templateText = templateLoader.Load(context, callerContext.Span, templatePath);
-                }
-                catch (Exception ex) when (!(ex is ScriptRuntimeException))
-                {
-                    throw new ScriptRuntimeException(callerContext.Span, $"Unexpected exception while loading the include `{templateName}` from path `{templatePath}`", ex);
-                }
-
-                if (templateText == null)
-                {
-                    throw new ScriptRuntimeException(callerContext.Span, $"The result of including `{templateName}->{templatePath}` cannot be null");
-                }
-
-                // Clone parser options
-                var parserOptions = context.TemplateLoaderParserOptions;
-                var lexerOptions = context.TemplateLoaderLexerOptions;
-                template = Template.Parse(templateText, templatePath, parserOptions, lexerOptions);
-
-                // If the template has any errors, throw an exception
-                if (template.HasErrors)
-                {
-                    throw new ScriptParserRuntimeException(callerContext.Span, $"Error while parsing template `{templateName}` from `{templatePath}`", template.Messages);
-                }
-
-                context.CachedTemplates.Add(templatePath, template);
-            }
-
-            // Make sure that we cannot recursively include a template
-            object result = null;
-            context.EnterRecursive(callerContext);
-            var previousIndent = context.CurrentIndent;
-            context.CurrentIndent = null;
-            context.PushOutput();
-            var previousArguments = context.GetValue(ScriptVariable.Arguments);
-            try
-            {
-                context.SetValue(ScriptVariable.Arguments, arguments, true, true);
-                if (previousIndent != null)
-                {
-                    // We reset before and after the fact that we have a new line
-                    context.ResetPreviousNewLine();
-                }
-                result = template.Render(context);
-                if (previousIndent != null)
-                {
-                    context.ResetPreviousNewLine();
-                }
-            }
-            finally
-            {
-                context.PopOutput();
-                context.CurrentIndent = previousIndent;
-                context.ExitRecursive(callerContext);
-
-                // Remove the arguments
-                context.DeleteValue(ScriptVariable.Arguments);
-                if (previousArguments != null)
-                {
-                    // Restore them if necessary
-                    context.SetValue(ScriptVariable.Arguments, previousArguments, true);
-                }
-            }
-            return result;
+            return context.RenderTemplate(template, arguments, callerContext);
         }
 
         public int RequiredParameterCount => 1;

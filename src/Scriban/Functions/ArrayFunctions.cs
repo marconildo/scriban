@@ -71,7 +71,7 @@ namespace Scriban.Functions
         }
 
         /// <summary>
-        /// Removes any non-null values from the input list.
+        /// Removes any null values from the input list.
         /// </summary>
         /// <param name="list">An input list</param>
         /// <returns>Returns a list with null value removed</returns>
@@ -161,6 +161,55 @@ namespace Scriban.Functions
             currentTags[cycleKey] = cycleIndex;
 
             return result;
+        }
+
+        /// <summary>
+        /// Returns the distinct elements of the input `list`.
+        /// </summary>
+        /// <param name="context">The template context</param>
+        /// <param name="span">The source span</param>
+        /// <param name="list">An input list</param>
+        /// <param name="function">The function to apply to each item in the list that returns a boolean.</param>
+        /// <param name="args">The arguments to pass to the function</param>
+        /// <returns>A boolean indicating if one of the item in the list satisfied the function.</returns>
+        /// <remarks>
+        /// ```scriban-html
+        /// {{ [" hello", " world", "20"] | array.any @string.contains "20"}}
+        /// {{ [" hello", " world", "20"] | array.any @string.contains "30"}}
+        /// ```
+        /// ```html
+        /// true
+        /// false
+        /// ```
+        /// </remarks>
+        public static bool Any(TemplateContext context, SourceSpan span, IEnumerable list, object function, params object[] args)
+        {
+            if (list == null)
+            {
+                return false;
+            }
+            if (function == null)
+            {
+                return false;
+            }
+            var scriptFunction = function as IScriptCustomFunction;
+            if (scriptFunction == null)
+            {
+                return false;
+            }
+
+            var arguments = new ScriptArray { null };
+            arguments.AddRange(args);
+            foreach (var item in list)
+            {
+                arguments[0] = item;
+                var result = ScriptFunctionCall.Call(context, context.CurrentNode, scriptFunction, arguments);
+                if (result is bool b && b)
+                {
+                    return true;
+                }
+            }
+            return false;
         }
 
         /// <summary>
@@ -653,11 +702,11 @@ namespace Scriban.Functions
         }
 
         /// <summary>
-        /// Returns if an `list` contains an specifique element
+        /// Returns if a `list` contains a specific `item`.
         /// </summary>
-        /// <param name="list">the input list</param>
-        /// <param name="item">the input item</param>
-        /// <returns>**true** if element is in `list`; otherwise **false**</returns>
+        /// <param name="list">The input list</param>
+        /// <param name="item">The input item</param>
+        /// <returns>**true** if `item` is in `list`; otherwise **false**</returns>
         /// <remarks>
         /// ```scriban-html
         /// {{ [1, 2, 3, 4] | array.contains 4 }}
@@ -668,6 +717,11 @@ namespace Scriban.Functions
         /// </remarks>
         public static bool Contains(IEnumerable list, object item)
         {
+            if (list == null)
+            {
+                return false;
+            }
+
             foreach (var element in list)
             {
                 if (element == item || (element != null && element.Equals(item))) return true;
@@ -716,7 +770,7 @@ namespace Scriban.Functions
 
             return new ScriptRange(impl(context, callerContext, span, list, scriptingFunction, scriptingFunction.GetParameterInfo(0).ParameterType));
         }
-
+        
         private class CycleKey : IEquatable<CycleKey>
         {
             public readonly string Group;

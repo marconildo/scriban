@@ -87,6 +87,9 @@ namespace Scriban.Parsing
                     return ParseVariable();
                 case TokenType.String:
                     return ParseString();
+                case TokenType.BeginInterpolatedString:
+                case TokenType.InterpolatedString:
+                    return ParseInterpolatedString();
                 case TokenType.VerbatimString:
                     return ParseVerbatimString();
                 default:
@@ -165,6 +168,13 @@ namespace Scriban.Parsing
                     case TokenType.ImplicitString:
                         leftOperand = ParseImplicitString();
                         break;
+                    case TokenType.BeginInterpolatedString:
+                    case TokenType.InterpolatedString:
+                        leftOperand = ParseInterpolatedString();
+                        break;
+                    case TokenType.ContinuationInterpolatedString:
+                        leftOperand = ParseInterpolatedStringPart();
+                        break;
                     case TokenType.VerbatimString:
                         leftOperand = ParseVerbatimString();
                         break;
@@ -173,6 +183,9 @@ namespace Scriban.Parsing
                         break;
                     case TokenType.OpenBrace:
                         leftOperand = ParseObjectInitializer();
+                        break;
+                    case TokenType.OpenInterpolatedBrace:
+                        leftOperand = ParseInterpolatedExpression();
                         break;
                     case TokenType.OpenBracket:
                         leftOperand = ParseArrayInitializer();
@@ -194,11 +207,11 @@ namespace Scriban.Parsing
                 {
                     if (functionCall != null)
                     {
-                        LogError($"Unexpected token `{GetAsText(Current)}` while parsing function call `{functionCall}`");
+                        LogError($"Unexpected token `{GetAsTextForLog(Current)}` while parsing function call `{functionCall}`");
                     }
                     else
                     {
-                        LogError($"Unexpected token `{GetAsText(Current)}` while parsing expression");
+                        LogError($"Unexpected token `{GetAsTextForLog(Current)}` while parsing expression");
                     }
                     return null;
                 }
@@ -210,11 +223,19 @@ namespace Scriban.Parsing
 
                 while (!hasAnonymousFunction)
                 {
+                    // If we are parsing an interpolated string, and the next token is an ending interpolated string, we stop here
+                    // As it this token is handled by ParseInterpolatedString() or ParseInterpolatedExpression()
+                    if (Current.Type == TokenType.EndingInterpolatedString || Current.Type == TokenType.CloseInterpolatedBrace || Current.Type == TokenType.ContinuationInterpolatedString
+                        || Current.Type == TokenType.OpenInterpolatedBrace)
+                    {
+                        break;
+                    }
+
                     if (_isLiquid && Current.Type == TokenType.Comma && functionCall != null)
                     {
                         NextToken(); // Skip the comma for arguments in a function call
                     }
-
+                    
                     // Parse Member expression are expected to be followed only by an identifier
                     if (Current.Type == TokenType.Dot || (!_isLiquid && Current.Type == TokenType.QuestionDot))
                     {
@@ -295,11 +316,11 @@ namespace Scriban.Parsing
                         ExpectAndParseTokenTo(indexerExpression.OpenBracket, TokenType.OpenBracket); // parse [
 
                         // unit test: 130-indexer-accessor-error5.txt
-                        indexerExpression.Index = ExpectAndParseExpression(indexerExpression, functionCall, 0, $"Expecting <index_expression> instead of `{GetAsText(Current)}`", mode);
+                        indexerExpression.Index = ExpectAndParseExpression(indexerExpression, functionCall, 0, $"Expecting <index_expression> instead of `{GetAsTextForLog(Current)}`", mode);
 
                         if (Current.Type != TokenType.CloseBracket)
                         {
-                            LogError($"Unexpected `{GetAsText(Current)}`. Expecting ']'");
+                            LogError($"Unexpected `{GetAsTextForLog(Current)}`. Expecting ']'");
                         }
                         else
                         {
@@ -310,7 +331,7 @@ namespace Scriban.Parsing
                         continue;
                     }
 
-                    if (mode == ParseExpressionMode.BasicExpression)
+                    if (mode == ParseExpressionMode.BasicExpression || (parentNode is ScriptUnaryExpression parentUnaryExpression && parentUnaryExpression.Operator == ScriptUnaryOperator.FunctionAlias))
                     {
                         break;
                     }
@@ -346,7 +367,7 @@ namespace Scriban.Parsing
                         leftOperand = new ScriptExpressionAsStatement(declaration) {Span = declaration.Span};
                         break;
                     }
-                    if(TryGetCompoundAssignmentOperator(out var scriptToken, out var tokenType) && !(scriptToken is null))
+                    if (TryGetCompoundAssignmentOperator(out var scriptToken, out var tokenType) && !(scriptToken is null))
                     {
                         var assignExpression = Open<ScriptAssignExpression>();
                         assignExpression.EqualToken = scriptToken;
@@ -410,10 +431,11 @@ namespace Scriban.Parsing
                             binaryExpression.OperatorToken.Value = binaryOperatorType.ToText();
                         }
 
-                        // unit test: 110-binary-simple-error1.txt
+                        string message = $"Expecting an <expression> to the right of the operator instead of `{GetAsTextForLog(Current)}`";
+                        // unit tests: 110-binary-simple-error1.txt and 010-interpolation-error-2.txt
                         binaryExpression.Right = ExpectAndParseExpression(binaryExpression,
                             functionCall ?? parentExpression, newPrecedence,
-                            $"Expecting an <expression> to the right of the operator instead of `{GetAsText(Current)}`",
+                            message,
                             mode); // propagate the mode in case we are in DefaultNoNamedArgument (so that the colon in 1 + 2 + 3 : will be correctly skipped)
                         leftOperand = Close(binaryExpression);
 
@@ -547,8 +569,16 @@ namespace Scriban.Parsing
                                     functionCall = null;
                                 }
 
-                                // We don't allow anything after named parameters for IScriptNamedArgumentContainer
-                                break;
+                                // If we have a pipe, let's try to continue parsing it
+                                if (IsCurrentPipeOrExpressionContinuation())
+                                {
+                                    continue;
+                                }
+                                else
+                                {
+                                    // We don't allow anything after named parameters for IScriptNamedArgumentContainer
+                                    break;
+                                }
                             }
 
                             // Otherwise we allow to mix normal parameters within named parameters
@@ -581,7 +611,7 @@ namespace Scriban.Parsing
                                 // OperatorToken = null // implicit multiply operator
                                 binaryExpression.Operator = ScriptBinaryOperator.Multiply;
                                 binaryExpression.Right = ExpectAndParseExpression(binaryExpression, functionCall ?? parentExpression, newPrecedence,
-                                    $"Expecting an <expression> to the right of the operator instead of `{GetAsText(Current)}`");
+                                    $"Expecting an <expression> to the right of the operator instead of `{GetAsTextForLog(Current)}`");
                                 leftOperand = Close(binaryExpression);
 
                                 continue;
@@ -688,14 +718,7 @@ namespace Scriban.Parsing
                         leftOperand = funcCall;
                     }
 
-                    if (
-                            (_isScientific &&
-                              Current.Type == TokenType.PipeGreater)
-                            ||
-                             (!_isScientific &&
-                                    Current.Type == TokenType.VerticalBar) ||
-                                    Current.Type == TokenType.PipeGreater
-                       )
+                    if (IsCurrentPipeOrExpressionContinuation())
                     {
                         if (functionCall != null)
                         {
@@ -738,6 +761,12 @@ namespace Scriban.Parsing
                 _expressionDepth = expressionDepthBeforeEntering;
                 _expressionLevel--;
             }
+        }
+
+        private bool IsCurrentPipeOrExpressionContinuation()
+        {
+            return (_isScientific && Current.Type == TokenType.PipeGreater)
+                   || (!_isScientific && Current.Type == TokenType.VerticalBar) || Current.Type == TokenType.PipeGreater;
         }
 
         private ScriptExpression ParseArrayInitializer()
@@ -823,7 +852,7 @@ namespace Scriban.Parsing
                     break;
                 }
 
-                if (!expectingEndOfInitializer && (Current.Type == TokenType.Identifier || Current.Type == TokenType.String))
+                if (!expectingEndOfInitializer && (Current.Type == TokenType.Identifier || Current.Type.IsStringToken()))
                 {
                     var positionBefore = Current;
 
@@ -863,7 +892,7 @@ namespace Scriban.Parsing
                     {
                         // unit test: 140-object-initializer-error4.txt
                         hasErrors = true;
-                        LogError($"Unexpected token `{GetAsText(Current)}` Expecting a colon : after identifier `{variable?.Name}` for object initializer member name");
+                        LogError($"Unexpected token `{GetAsTextForLog(Current)}` Expecting a colon : after identifier `{variable?.Name}` for object initializer member name");
                         break;
                     }
 
@@ -874,7 +903,7 @@ namespace Scriban.Parsing
                     {
                         // unit test: 140-object-initializer-error5.txt
                         hasErrors = true;
-                        LogError($"Unexpected token `{GetAsText(Current)}`. Expecting an expression for the value of the member.");
+                        LogError($"Unexpected token `{GetAsTextForLog(Current)}`. Expecting an expression for the value of the member.");
                         break;
                     }
 
@@ -905,7 +934,7 @@ namespace Scriban.Parsing
                 {
                     // unit test: 140-object-initializer-error1.txt
                     hasErrors = true;
-                    LogError($"Unexpected token `{GetAsText(Current)}` while parsing object initializer. Expecting a simple identifier for the member name.");
+                    LogError($"Unexpected token `{GetAsTextForLog(Current)}` while parsing object initializer. Expecting a simple identifier for the member name.");
                     break;
                 }
             }
@@ -935,17 +964,70 @@ namespace Scriban.Parsing
             else
             {
                 // unit test: 106-parenthesis-error1.txt
-                LogError(Current, $"Invalid token `{GetAsText(Current)}`. Expecting a closing `)`.");
+                LogError(Current, $"Invalid token `{GetAsTextForLog(Current)}`. Expecting a closing `)`.");
             }
             return Close(expression);
         }
 
+        private ScriptInterpolatedStringExpression ParseInterpolatedString()
+        {
+            var expression = Open<ScriptInterpolatedStringExpression>();
+
+            if (Current.Type == TokenType.InterpolatedString)
+            {
+                expression.Parts.Add(ParseInterpolatedStringPart());
+            }
+            else
+            {
+                Debug.Assert(Current.Type == TokenType.BeginInterpolatedString);
+                // Token it BeginInterpolatedString
+                expression.Parts.Add(ParseInterpolatedStringPart());
+
+                while (Current.Type != TokenType.EndingInterpolatedString)
+                {
+                    var nextExpression = ParseExpression(expression);
+                    if (nextExpression == null)
+                    {
+                        // Missing closing token, but it should be caught at a higher level
+                        break;
+                    }
+                    expression.Parts.Add(nextExpression);
+                }
+
+                if (Current.Type == TokenType.EndingInterpolatedString)
+                {
+                    // Token is EndingInterpolatedString
+                    expression.Parts.Add(ParseInterpolatedStringPart());
+                }
+            }
+            
+            return Close(expression);
+        }
+        
+        private ScriptExpression ParseInterpolatedExpression()
+        {
+            var expression = Open<ScriptInterpolatedExpression>();
+            ExpectAndParseTokenTo(expression.OpenBrace, TokenType.OpenInterpolatedBrace); // Parse {
+            expression.Expression = ExpectAndParseExpression(expression);
+
+            // Opened interpolated expression not closed on the same line.
+            if (Current.Type != TokenType.CloseInterpolatedBrace)
+            {
+                LogError(CurrentSpan, $"Opened interpolated expression not closed on the same line.");
+            }
+            else
+            {
+                ExpectAndParseTokenTo(expression.CloseBrace, TokenType.CloseInterpolatedBrace); // Parse }
+            }
+            return Close(expression);
+        }
+        
         private ScriptToken ParseToken(TokenType tokenType)
         {
             var verbatim = Open<ScriptToken>();
             if (Current.Type != tokenType)
             {
-                LogError(CurrentSpan, $"Unexpected token found `{GetAsText(Current)}` while expecting `{tokenType.ToText()}`.");
+                LogError(CurrentSpan, $"Unexpected token found `{GetAsTextForLog(Current)}` while expecting `{tokenType.ToText()}`.");
             }
             verbatim.TokenType = Current.Type;
             verbatim.Value = tokenType.ToText();
@@ -958,7 +1040,7 @@ namespace Scriban.Parsing
             var verbatim = Open(existingToken);
             if (Current.Type != expectedTokenType)
             {
-                LogError(CurrentSpan, $"Unexpected token found `{GetAsText(Current)}` while expecting `{expectedTokenType.ToText()}`.");
+                LogError(CurrentSpan, $"Unexpected token found `{GetAsTextForLog(Current)}` while expecting `{expectedTokenType.ToText()}`.");
             }
             NextToken();
             Close(verbatim);
@@ -972,7 +1054,7 @@ namespace Scriban.Parsing
             var verbatim = Open(existingKeyword);
             if (!MatchText(Current, existingKeyword.Value))
             {
-                LogError(CurrentSpan, $"Unexpected keyword found `{GetAsText(Current)}` while expecting `{existingKeyword.Value}`.");
+                LogError(CurrentSpan, $"Unexpected keyword found `{GetAsTextForLog(Current)}` while expecting `{existingKeyword.Value}`.");
             }
             NextToken();
             Close(verbatim);
@@ -1106,7 +1188,7 @@ namespace Scriban.Parsing
             {
                 return ParseExpression(parentNode, parentExpression, newPrecedence, mode, allowAssignment);
             }
-            LogError(parentNode, CurrentSpan, message ?? $"Expecting <expression> instead of `{GetAsText(Current)}`");
+            LogError(parentNode, CurrentSpan, message ?? $"Expecting <expression> instead of `{GetAsTextForLog(Current)}`");
             return null;
         }
 
@@ -1116,7 +1198,7 @@ namespace Scriban.Parsing
             {
                 return ParseExpression(parentNode, null, 0, mode);
             }
-            LogError(parentNode, CurrentSpan, $"Expecting <expression> instead of `{GetAsText(Current)}`");
+            LogError(parentNode, CurrentSpan, $"Expecting <expression> instead of `{GetAsTextForLog(Current)}`");
             return null;
         }
 
@@ -1133,6 +1215,10 @@ namespace Scriban.Parsing
                 case TokenType.BinaryInteger:
                 case TokenType.Float:
                 case TokenType.String:
+                case TokenType.BeginInterpolatedString:
+                case TokenType.ContinuationInterpolatedString:
+                case TokenType.EndingInterpolatedString:
+                case TokenType.InterpolatedString:
                 case TokenType.ImplicitString:
                 case TokenType.VerbatimString:
                 case TokenType.OpenParen:

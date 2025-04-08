@@ -52,6 +52,19 @@ namespace Scriban.Parsing
 
                     if (hasEnd)
                     {
+                        if (_blockLevel == 1)
+                        {
+                            var span = new SourceSpan(_lexer.SourcePath, Previous.End, Previous.End);
+                            if (_isLiquid)
+                            {
+                                var syntax = ScriptSyntaxAttribute.Get(parentStatement);
+                                LogError(parentStatement, span, $"Found <end> statement `end{syntax.TypeName}` without a corresponding beginning of a block");
+                            }
+                            else
+                            {
+                                LogError(parentStatement, span, $"Found <end> statement without a corresponding beginning of a block");
+                            }
+                        }
                         break;
                     }
                 }
@@ -197,7 +210,7 @@ namespace Scriban.Parsing
                                 else
                                 {
                                     nextStatement = false;
-                                    LogError($"Unexpected token {GetAsText(Current)}");
+                                    LogError($"Unexpected token {GetAsTextForLog(Current)}");
                                 }
                                 break;
                         }
@@ -205,7 +218,7 @@ namespace Scriban.Parsing
                     else
                     {
                         nextStatement = false;
-                        LogError($"Unexpected token {GetAsText(Current)} while not in a code block {{ ... }}");
+                        LogError($"Unexpected token {GetAsTextForLog(Current)} while not in a code block {{ ... }}");
                         // LOG an ERROR. Don't expect any other tokens outside a code section
                     }
                     break;
@@ -292,13 +305,16 @@ namespace Scriban.Parsing
                 {
                     string indent = null;
 
-                    var text = rawStatement.Text;
-                    for (int j = text.Length - 1; j >= 0; j--)
+                    // Iterate on the original string to detect \n
+                    var slice = rawStatement.Text;
+                    var text = slice.FullText;
+                    var end = slice.Index + slice.Length - 1;
+                    for (int j = end; j >= 0; j--)
                     {
                         var c = text[j];
                         if (c == '\n')
                         {
-                            indent = text.Substring(j + 1);
+                            indent = text.Substring(j + 1, end - j);
                             break;
                         }
 
@@ -312,7 +328,7 @@ namespace Scriban.Parsing
                             // We have a raw statement that has only white spaces
                             // It could be the first raw statement of the document
                             // so we continue but we handle it later
-                            indent = text.ToString();
+                            indent = text.Substring(0, end + 1);
                         }
                     }
                     scriptEscapeStatement.Indent = indent;
@@ -400,7 +416,7 @@ namespace Scriban.Parsing
                 if (Current.Type != TokenType.Identifier || GetAsText(Current) != "in")
                 {
                     // unit test: 211-for-error2.txt
-                    LogError(forStatement, $"Expecting 'in' word instead of `{GetAsText(Current)}`");
+                    LogError(forStatement, $"Expecting 'in' word instead of `{GetAsTextForLog(Current)}`");
                 }
                 else
                 {
@@ -535,7 +551,7 @@ namespace Scriban.Parsing
             if (parent is ScriptCaseStatement)
             {
                 // 205-case-when-statement-error1.txt
-                LogError(token, $"Unexpected statement/expression `{GetAsText(token)}` in the body of a `case` statement. Only `when`/`else` are expected.");
+                LogError(token, $"Unexpected statement/expression `{GetAsTextForLog(token)}` in the body of a `case` statement. Only `when`/`else` are expected.");
             }
         }
 
@@ -554,7 +570,7 @@ namespace Scriban.Parsing
             }
             else
             {
-                LogError(parentNode, $"Expecting a variable instead of `{GetAsText(Current)}`");
+                LogError(parentNode, $"Expecting a variable instead of `{GetAsTextForLog(Current)}`");
             }
             return null;
         }
@@ -579,7 +595,7 @@ namespace Scriban.Parsing
                 return true;
             }
             // If we are not finding an end of statement, log a fatal error
-            LogError(CurrentSpan, $"Invalid token found `{GetAsText(Current)}`. Expecting <EOL>/end of line.", true);
+            LogError(CurrentSpan, $"Invalid token found `{GetAsTextForLog(Current)}`. Expecting <EOL>/end of line.", true);
             return false;
         }
 

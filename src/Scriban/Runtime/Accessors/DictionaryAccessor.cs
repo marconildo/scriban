@@ -153,7 +153,7 @@ namespace Scriban.Runtime.Accessors
 
         public bool TrySetValue(TemplateContext context, SourceSpan span, object target, string member, object value)
         {
-            ((IDictionary<TKey, TValue>) value)[TransformToKey(context, member)] = (TValue)value;
+            ((IDictionary<TKey, TValue>) target)[TransformToKey(context, member)] = (TValue)value;
             return true;
         }
 
@@ -175,7 +175,7 @@ namespace Scriban.Runtime.Accessors
 
         public bool TrySetItem(TemplateContext context, SourceSpan span, object target, object index, object value)
         {
-            ((IDictionary<TKey, TValue>) value)[(TKey)index] = (TValue)value;
+            ((IDictionary<TKey, TValue>) target)[(TKey)index] = (TValue)value;
             return true;
         }
 

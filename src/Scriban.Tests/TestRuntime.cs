@@ -2,6 +2,7 @@
 // Licensed under the BSD-Clause 2 license. See license.txt file in the project root for full license information.
 
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Data;
 using System.Diagnostics;
@@ -9,7 +10,6 @@ using System.Globalization;
 using System.Linq;
 using System.Numerics;
 using System.Reflection;
-using System.Runtime.CompilerServices;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 using NUnit.Framework;
@@ -24,6 +24,167 @@ namespace Scriban.Tests
     [TestFixture]
     public class TestRuntime
     {
+        [Test]
+        public void TestFunctionPointerWithPath()
+        {
+            var script = """
+                         {{ ["", "200",  "400"] | array.any @string.contains '20' }}
+                         """;
+            var template = Scriban.Template.Parse(script);
+            var result = template.Render();
+            Assert.AreEqual("true", result);
+
+            script = """
+                     {{ ["", "200",  "400"] | array.any @string.contains '50' }}
+                     """;
+            template = Scriban.Template.Parse(script);
+            result = template.Render();
+            Assert.AreEqual("false", result);
+        }
+        
+        [Test]
+        public void TestPipeAndNamedArguments()
+        {
+            var script = """
+                         {{func get_values; ret [{name:'A'},{name:'B'},{name:'C'}]; end;}}4) Breaks: {{ get_values '1' two:'2' three: '3' | array.map 'name' }}
+                         """;
+            var template = Scriban.Template.Parse(script);
+            var result = template.Render();
+
+            Assert.AreEqual("4) Breaks: [\"A\", \"B\", \"C\"]", result);
+        }
+        
+        [Test]
+        public void TestNullCoallescingWithStringInterpolation()
+        {
+            var script = """
+                         {{ "hello" ?? $"{" "}world" }}
+                         """;
+
+            //var lexer = new Lexer(script);
+            //foreach (var token in lexer)
+            //{
+            //    Console.WriteLine(token);
+            //}
+            var template = Scriban.Template.Parse(script);
+            var result = template.Render();
+
+            template.Page.PrintTo(new ScriptPrinter(new TextWriterOutput(Console.Out)));
+
+            Assert.AreEqual("hello", result);
+        }
+
+        [Test]
+        public void String_And_Null_Concatenated_Should_Not_Null()
+        {
+            var context = new TemplateContext()
+            {
+            };
+            var tmplExample1 = Template.Parse("{{'my name is ' + null}}");
+            var tmplExample2 = Template.Parse("{{$'my name is {null}'}}");
+
+            var result = tmplExample1.Render(context);
+            Assert.AreEqual("my name is ", result);
+
+            result = tmplExample2.Render(context);
+            Assert.AreEqual("my name is ", result);
+        }
+
+        [Test]
+        public void TestAssignValToDictionary()
+        {
+            var dict = new Dictionary<string, string>();
+            dict["name"] = "bob";
+            var model = new ScriptObject();
+            model.Add("dict", dict);
+            var context = new TemplateContext();
+            context.PushGlobal(model);
+
+            var input = "{{dict.location = \"home\"}}";
+            var template = Template.Parse(input);
+            var results = template.Render(context);
+
+            input = "{{dict[\"location\"] = \"home\"}}";
+            template = Template.Parse(input);
+            results = template.Render(context);
+            // Assert.AreEqual("", results);
+        }
+
+        [Test]
+        public void TestScriptObjectAsDictionary()
+        {
+            var model = (IDictionary)(new ScriptObject());
+            model.Add("name", "John");
+            model.Add("age", 20);
+            Assert.AreEqual("John", model["name"]);
+            Assert.AreEqual(20, model["age"]);
+        }
+
+        [Test]
+        public void TestLazy()
+        {
+            var input = @"{{ value }}";
+            var template = Template.Parse(input);
+            var result = template.Render(new { value = new ScriptLazy<int>(() => 1)});
+            Assert.AreEqual("1", result);
+        }
+
+        [Test]
+        public void TestEval()
+        {
+            var input = @"{{ x = object.eval '1 + 1' }}";
+            var template = Template.Parse(input);
+            var context = new TemplateContext();
+            var result = template.Render(context);
+            Assert.AreEqual("", result);
+            Assert.AreEqual(2, ((ScriptObject)context.CurrentGlobal)["x"]);
+
+            input = @"{{ x = object.eval '+' }}";
+            template = Template.Parse(input);
+            context = new TemplateContext();
+            Assert.Throws<ScriptRuntimeException>( () => template.Render(context));
+        }
+
+        [Test]
+        public void TestEnumerator()
+        {
+            var input = @"{{
+  queue.add 'a'
+  for x in queue.flush
+    x
+    if x == 'a'; queue.add 'b'; end
+  end
+}}";
+            var template = Template.Parse(input);
+
+            var test = template.Render(new { queue = new QueueBuiltin() });
+            Assert.AreEqual("ab", test);
+        }
+
+        class QueueBuiltin : ScriptObject
+        {
+            static Queue<string> queue = new();
+
+            public static void Add(string x) => queue.Enqueue(x);
+
+            public static IEnumerable<string> Flush()
+            {
+                while (queue.TryDequeue(out var x))
+                    yield return x;
+            }
+        }
+
+
+        [Test]
+        public void TestDateParse()
+        {
+            Template template = Template.Parse(
+                @"{{date.format='%FT%T.%N%Z'}}{{ date.parse '2018~06~17~13~59~+08:00' '%Y~%m~%d~%H~%M~%Z' }}");
+            var result = template.Render();
+            Console.WriteLine(result);
+        }
+
+
         [Test]
         public void TestLoop()
         {
@@ -75,7 +236,7 @@ end
             var input = @"{{if value > 0; 1; else; 2; end;}}";
 
             var template = Template.Parse(input);
-            var result = template.Render(new { value = (ulong) 1} );
+            var result = template.Render(new { value = (ulong)1 });
             Assert.AreEqual("1", result);
         }
 
@@ -99,7 +260,7 @@ end
         {
             var result = Template.Parse("{{['', '200', '','400'] | array.filter @string.empty}}").Evaluate(new TemplateContext());
             Assert.IsInstanceOf<ScriptRange>(result);
-            var array = (ScriptRange) result;
+            var array = (ScriptRange)result;
             Assert.AreEqual(2, array.Count);
             Assert.AreEqual("", array[0]);
             Assert.AreEqual("", array[1]);
@@ -129,7 +290,7 @@ end
             Assert.AreEqual("array", context.GetTypeName(new ScriptArray()));
             Assert.AreEqual("array", context.GetTypeName(new ScriptArray<float>()));
             Assert.AreEqual("object", context.GetTypeName(new ScriptObject()));
-            Assert.AreEqual("function", context.GetTypeName(DelegateCustomAction.Create(() => {})));
+            Assert.AreEqual("function", context.GetTypeName(DelegateCustomAction.Create(() => { })));
             Assert.AreEqual("enum", context.GetTypeName(ScriptLang.Default));
         }
 
@@ -338,7 +499,7 @@ func g(x); x ; end;
 1 + g(2)
 -}}
 ");
-                var tc = new TemplateContext() {ErrorForStatementFunctionAsExpression = true};
+                var tc = new TemplateContext() { ErrorForStatementFunctionAsExpression = true };
                 Assert.Throws<ScriptRuntimeException>(() => template.Render(tc));
             }
             {
@@ -348,7 +509,7 @@ g(x) = x * 5;
 1 + g(2)
 -}}
 ");
-                var tc = new TemplateContext() {ErrorForStatementFunctionAsExpression = true};
+                var tc = new TemplateContext() { ErrorForStatementFunctionAsExpression = true };
                 var result = template.Render(tc);
                 Assert.AreEqual("11", result);
             }
@@ -359,7 +520,7 @@ func g(x); if x < 0; ret x + 1; else; ret x + 2; end; end;
 1 + g(2) + g(-1)
 -}}
 ");
-                var tc = new TemplateContext() {ErrorForStatementFunctionAsExpression = true};
+                var tc = new TemplateContext() { ErrorForStatementFunctionAsExpression = true };
                 var result = template.Render(tc);
                 Assert.AreEqual("5", result);
             }
@@ -374,9 +535,9 @@ func g(x); if x < 0; ret x + 1; else; ret x + 2; end; end;
 g(x,y,z) = x + y * 2 + z * 10
 1 + g(1,2,3) }} {{ g(5,6,7) * g(1,2,3) + 1
 }}");
-                var tc = new TemplateContext() {ErrorForStatementFunctionAsExpression = true};
+                var tc = new TemplateContext() { ErrorForStatementFunctionAsExpression = true };
                 var result = template.Render(tc);
-                Assert.AreEqual($"{1 + g(1,2,3)} {g(5,6,7) * g(1,2,3) + 1}", result);
+                Assert.AreEqual($"{1 + g(1, 2, 3)} {g(5, 6, 7) * g(1, 2, 3) + 1}", result);
             }
 
             int g(int x, int y, int z) => x + y * 2 + z * 10;
@@ -431,7 +592,7 @@ f(1)
         public void TestInvalidConvertToInt()
         {
             var template = Template.ParseLiquid("{{html>0}}");
-            var ex = Assert.Catch<ScriptRuntimeException>(() => template.Render(new {x = 0}));
+            var ex = Assert.Catch<ScriptRuntimeException>(() => template.Render(new { x = 0 }));
             Assert.AreEqual("<input>(1,7) : error : Unable to convert type `object` to int", ex.Message);
         }
 
@@ -792,7 +953,7 @@ Tax: {{ 7 | match_tax }}";
                 Assert.True(obj.ContainsKey("static_yoyo"));
                 var function = (IScriptCustomFunction)obj["static_yoyo"];
                 var context = new TemplateContext();
-                var result = function.Invoke(context, new ScriptFunctionCall(), new ScriptArray() {"a"}, null);
+                var result = function.Invoke(context, new ScriptFunctionCall(), new ScriptArray() { "a" }, null);
                 Assert.AreEqual("yoyo2 a", result);
             }
 
@@ -952,7 +1113,7 @@ Tax: {{ 7 | match_tax }}";
 
             var template = Template.Parse("{{ model.char }}");
             var context = new TemplateContext();
-            var result = template.Render(new {model = test});
+            var result = template.Render(new { model = test });
             Assert.AreEqual("a", result);
         }
 
@@ -1116,8 +1277,8 @@ Tax: {{ 7 | match_tax }}";
         [Test]
         public void TestIndexerOnNET()
         {
-            var myobject = new MyObject() { FieldA = "yo"};
-            var result = Template.Parse("{{obj['field_a']}}").Render(new ScriptObject() {{"obj", myobject}});
+            var myobject = new MyObject() { FieldA = "yo" };
+            var result = Template.Parse("{{obj['field_a']}}").Render(new ScriptObject() { { "obj", myobject } });
             Assert.AreEqual("yo", result);
         }
 
@@ -1130,7 +1291,7 @@ Tax: {{ 7 | match_tax }}";
             {
                 [key] = expected
             };
-            var result = Template.Parse($"{{{{obj['{key}']}}}}").Render(new ScriptObject() {{"obj", myobject}});
+            var result = Template.Parse($"{{{{obj['{key}']}}}}").Render(new ScriptObject() { { "obj", myobject } });
             Assert.AreEqual(expected, result);
         }
         [Test]
@@ -1142,7 +1303,7 @@ Tax: {{ 7 | match_tax }}";
             {
                 [key] = "Initial"
             };
-            _ = Template.Parse($"{{{{obj['{key}'] = '{expected}'}}}}").Render(new ScriptObject() {{"obj", myobject}});
+            _ = Template.Parse($"{{{{obj['{key}'] = '{expected}'}}}}").Render(new ScriptObject() { { "obj", myobject } });
             Assert.AreEqual(expected, myobject[key]);
         }
         [Test]
@@ -1154,7 +1315,7 @@ Tax: {{ 7 | match_tax }}";
             {
                 [key] = expected
             };
-            var result = Template.Parse($"{{{{obj[{key}]}}}}").Render(new ScriptObject() {{"obj", myobject}});
+            var result = Template.Parse($"{{{{obj[{key}]}}}}").Render(new ScriptObject() { { "obj", myobject } });
             Assert.AreEqual(expected, result);
         }
         [Test]
@@ -1166,7 +1327,7 @@ Tax: {{ 7 | match_tax }}";
             {
                 [key] = "Initial"
             };
-            _ = Template.Parse($"{{{{obj[{key}] = '{expected}'}}}}").Render(new ScriptObject() {{"obj", myobject}});
+            _ = Template.Parse($"{{{{obj[{key}] = '{expected}'}}}}").Render(new ScriptObject() { { "obj", myobject } });
             Assert.AreEqual(expected, myobject[key]);
         }
 
@@ -1180,6 +1341,19 @@ Tax: {{ 7 | match_tax }}";
             var template = Template.Parse("Hello {{ name }}!");
             var result = template.Render(context);
             Assert.AreEqual("Hello world!", result);
+        }
+
+        [Test]
+        public void TestCaseInsensitiveLookupOnHierarchy()
+        {
+            var obj = new ScriptObject(StringComparer.OrdinalIgnoreCase);
+            obj.Import(new { UPPERCASED = new { lowercased = 42 } }, renamer: mi => mi.Name);
+
+            var context = new TemplateContext(StringComparer.OrdinalIgnoreCase);
+            context.PushGlobal(obj);
+
+            var result = Template.Parse("{{UPPERCASED.lowercased}}-{{uppercased.LOWERCASED}}-{{UPPERCASED.LOWERCASED}}-{{uppercased.lowercased}}").Render(context);
+            TextAssert.AreEqual("42-42-42-42", result);
         }
 
         private class MyObject : MyStaticObject

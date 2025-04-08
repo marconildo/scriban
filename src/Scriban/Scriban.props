@@ -7,13 +7,13 @@
     <LangVersion>8.0</LangVersion>
     <DefineConstants>$(DefineConstants);SCRIBAN_PUBLIC</DefineConstants>
     <Authors>Alexandre Mutel</Authors>
-    <TargetFrameworks>netstandard2.0;net5.0;net6.0</TargetFrameworks>
+    <TargetFrameworks>netstandard2.0;net7.0</TargetFrameworks>
     <PackageTags>templating;handlebars;liquid</PackageTags>
     <PackageIcon>scriban.png</PackageIcon>
     <PackageReadmeFile>readme.md</PackageReadmeFile>
     <PackageProjectUrl>https://github.com/lunet-io/scriban</PackageProjectUrl>
     <PackageLicenseExpression>BSD-2-Clause</PackageLicenseExpression>
-    <NoWarn>$(NoWarn);CS1591</NoWarn>
+    <NoWarn>$(NoWarn);CS1591;NU5129</NoWarn>
     <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
     <!-- This is enabled but still not used in scriban, only setup to protect embedding source to produce new warnings if the user project is using nullable -->
@@ -25,22 +25,27 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Pack sources in the nuget packages -->
-    <None Remove="Package\Scriban.*"/>
+    <None Remove="$(MSBuildThisFileDirectory)Package\Scriban.*"/>
     <Content Include="Package\Scriban.*">
       <Pack>true</Pack>
       <PackagePath>build\</PackagePath>
       <PackageCopyToOutput>true</PackageCopyToOutput>
     </Content>
-    <Content Include="**\*.cs" Exclude="**\obj\**;**\bin\**" Visible="false">
+    <Content Include="$(MSBuildThisFileDirectory)Package\Package.editorconfig">
+      <Pack>true</Pack>
+      <PackagePath>src\Scriban\.editorconfig</PackagePath>
+      <PackageCopyToOutput>true</PackageCopyToOutput>
+    </Content>
+    <Content Include="$(MSBuildThisFileDirectory)**\*.cs" Exclude="$(MSBuildThisFileDirectory)**\obj\**;$(MSBuildThisFileDirectory)**\bin\**" Visible="false">
       <Pack>true</Pack>
       <PackagePath>src\Scriban\</PackagePath>
       <PackageCopyToOutput>true</PackageCopyToOutput>
     </Content>
 
-    <None Include="../../img/scriban.png" Pack="true" PackagePath="" />
-    <None Include="../../readme.md" Pack="true" PackagePath="/"/>
+    <None Include="$(MSBuildThisFileDirectory)../../img/scriban.png" Pack="true" PackagePath="" />
+    <None Include="$(MSBuildThisFileDirectory)../../readme.md" Pack="true" PackagePath="/"/>
 
-    <PackageReference Include="MinVer" Version="3.0.0">
+    <PackageReference Include="MinVer" Version="4.3.0">
       <PrivateAssets>all</PrivateAssets>
       <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
     </PackageReference>

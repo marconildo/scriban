@@ -196,6 +196,10 @@ namespace Scriban.Syntax
 
                             return CalculateToString(context, span, op, leftSpan, leftValue, rightSpan, rightValue);
                         }
+                        else if (leftValue == null || rightValue == null)
+                        {
+                            return CalculateOthers(context, span, op, leftSpan, leftValue, rightSpan, rightValue);
+                        }
                         else if (leftValue == EmptyScriptObject.Default || rightValue == EmptyScriptObject.Default)
                         {
                             return CalculateEmpty(context, span, op, leftSpan, leftValue, rightSpan, rightValue);
@@ -478,7 +482,7 @@ namespace Scriban.Syntax
                 switch (op)
                 {
                     case ScriptBinaryOperator.CompareEqual:
-                    	return false;
+                        return false;
                     case ScriptBinaryOperator.CompareNotEqual:
                         return true;
 

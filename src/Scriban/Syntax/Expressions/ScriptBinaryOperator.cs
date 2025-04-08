@@ -71,10 +71,6 @@ namespace Scriban.Syntax
         RangeExclude,
 
         Custom,
-
-
-
-
     }
 
 #if SCRIBAN_PUBLIC
@@ -190,7 +186,6 @@ namespace Scriban.Syntax
                     return "<<";
                 case ScriptBinaryOperator.ShiftRight:
                     return ">>";
-
                 case ScriptBinaryOperator.LiquidContains:
                     return "| string.contains ";
                 case ScriptBinaryOperator.LiquidStartsWith:

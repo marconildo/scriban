@@ -25,8 +25,6 @@ namespace Scriban.Tests
     [TestFixture]
     public class TestParser
     {
-        private const string BuiltinMarkdownDocFile = @"..\..\..\..\..\doc\builtins.md";
-
         [Test]
         public void TestMemberDot()
         {
@@ -98,8 +96,9 @@ namespace Scriban.Tests
         {
             var template = Template.ParseLiquid("{%endunless");
             Assert.True(template.HasErrors);
-            Assert.AreEqual(1, template.Messages.Count);
+            Assert.AreEqual(2, template.Messages.Count);
             Assert.AreEqual("<input>(1,3) : error : Unable to find a pending `unless` for this `endunless`", template.Messages[0].ToString());
+            StringAssert.StartsWith("<input>(1,11) : error : Error while parsing ScriptPage: Found <end> statement `endScriptPage` without a corresponding beginning of a block", template.Messages[1].ToString());
         }
 
         [Test]
@@ -588,6 +587,70 @@ Hello
             TextAssert.AreEqual("  test\n  test2", result);
         }
 
+        [Test]
+        public void TestIndent3()
+        {
+            var input = @"a
+{{~ if true ~}}
+b
+{{~ end ~}}
+ {{'c'}}";
+            var template = Template.Parse(input);
+            var result = template.Render();
+            result = TextAssert.Normalize(result);
+
+            TextAssert.AreEqual("a\nb\n c", result);
+        }
+
+        [Test]
+        public void TestIndent4()
+        {
+            var input = @"{{ ""b"" }}
+Normal Text
+    {{ ""indented text"" }}
+";
+            var template = Template.Parse(input);
+            var result = template.Render();
+            result = TextAssert.Normalize(result);
+
+            TextAssert.AreEqual("b\nNormal Text\n    indented text\n", result);
+        }
+
+        [Test]
+        public void TestIndent5()
+        {
+            var input = @"{{~ for test in  ['A', 'B'] ~}}
+  {{ test}}
+{{~ end ~}}
+{{~ for test in  ['A', 'B'] ~}}
+  {{ test}}
+{{~ end ~}}
+{{~ for test in  ['A', 'B'] ~}}
+  {{ test}}
+{{~ end ~}}
+{{~ for test in  ['A', 'B'] ~}}
+  {{ test}}
+{{~ end ~}}
+
+{{~ for test in  ['A', 'B'] ~}}
+  {{ test}}
+{{~ end ~}}
+{{~ for test in  ['A', 'B'] ~}}
+  {{ test}}
+{{~ end ~}}
+{{~ for test in  ['A', 'B'] ~}}
+  {{ test}}
+{{~ end ~}}
+{{~ for test in  ['A', 'B'] ~}}
+  {{ test}}
+{{~ end ~}}
+";
+            var template = Template.Parse(input);
+            var result = template.Render();
+            result = TextAssert.Normalize(result);
+
+            TextAssert.AreEqual("  A\n  B\n  A\n  B\n  A\n  B\n  A\n  B\n\n  A\n  B\n  A\n  B\n  A\n  B\n  A\n  B\n", result);
+        }
 
         [TestCaseSource("ListTestFiles", new object[] { "000-basic" })]
         public static void A000_basic(string inputName)
@@ -597,6 +660,12 @@ Hello
 
         [TestCaseSource("ListTestFiles", new object[] { "010-literals" })]
         public static void A010_literals(string inputName)
+        {
+            TestFile(inputName);
+        }
+
+        [TestCaseSource("ListTestFiles", new object[] { "020-interpolation" })]
+        public static void A020_interpolation(string inputName)
         {
             TestFile(inputName);
         }
@@ -755,6 +824,18 @@ m
                 ObjectRecursionLimit = 100
             };
             Assert.Throws<ScriptRuntimeException>(() => template.Render(context));
+        }
+
+        [TestCase(@"ab{{end}}c")]  // no blocks
+        [TestCase(@"a{{if true}}b{{end}}{{end}}c")]  // one-level block
+        [TestCase(@"a{{if true}}{{for i in 0..1}}b{{end}}{{end}}{{end}}c")]  // two-level block (nested)
+        public void TestUnmatchedEndStatementCausesError(string templateText)
+        {
+            var template = Template.Parse(templateText);
+            Assert.True(template.HasErrors);
+
+            Assert.AreEqual(1, template.Messages.Count);
+            StringAssert.Contains("Found <end> statement without a corresponding beginning of a block", template.Messages[0].ToString());
         }
 
         private static void TestFile(string inputName, bool testASTInstead = false)
@@ -1042,7 +1123,7 @@ m
 
         public static IEnumerable ListBuiltinFunctionTests(string functionObject)
         {
-            var builtinDocFile = Path.GetFullPath(Path.Combine(BaseDirectory, BuiltinMarkdownDocFile));
+            var builtinDocFile = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", "..", "doc", "builtins.md"));
             var lines = File.ReadAllLines(builtinDocFile);
 
             var matchFunctionSection = new Regex($@"^###\s+`({functionObject}\.\w+)`");
