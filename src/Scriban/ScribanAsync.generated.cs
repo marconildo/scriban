@@ -384,9 +384,11 @@ namespace Scriban
             CurrentIndent = null;
             PushOutput();
             var previousArguments = await GetValueAsync(ScriptVariable.Arguments).ConfigureAwait(false);
+            IReadOnlyList<ScriptVariable> promotedVariables = Array.Empty<ScriptVariable>();
             try
             {
                 SetValue(ScriptVariable.Arguments, arguments, true, true);
+                promotedVariables = PromoteScriptNamedArguments(callerContext);
                 if (previousIndent != null)
                 {
                     // We reset before and after the fact that we have a new line
@@ -406,6 +408,11 @@ namespace Scriban
 
                 // Remove the arguments
                 DeleteValue(ScriptVariable.Arguments);
+                // Remove any promoted variables
+                foreach (var v in promotedVariables)
+                {
+                    DeleteValue(v);
+                }
                 if (previousArguments != null)
                 {
                     // Restore them if necessary
@@ -600,8 +607,8 @@ namespace Scriban.Functions
             }
 
             var separator = await RenderComponentAsync(context, callerContext, arguments, context.ObjectToString(arguments[1]) ?? string.Empty).ConfigureAwait(false);
-            var start = await RenderComponentAsync(context, callerContext, arguments, arguments.Count >= 2 ? context.ObjectToString(arguments[2]) : string.Empty).ConfigureAwait(false);
-            var end = await RenderComponentAsync(context, callerContext, arguments, arguments.Count >= 3 ? context.ObjectToString(arguments[3]) : string.Empty).ConfigureAwait(false);
+            var start = await RenderComponentAsync(context, callerContext, arguments, arguments.Count > 2 ? context.ObjectToString(arguments[2]) : string.Empty).ConfigureAwait(false);
+            var end = await RenderComponentAsync(context, callerContext, arguments, arguments.Count > 3 ? context.ObjectToString(arguments[3]) : string.Empty).ConfigureAwait(false);
 
             var sb = new StringBuilder();
             if (!string.IsNullOrEmpty(start))
@@ -2396,7 +2403,8 @@ namespace Scriban.Syntax
                 {
                     break;
                 }
-            };
+            }
+            ;
             await AfterLoopAsync(context).ConfigureAwait(false);
             return result;
         }

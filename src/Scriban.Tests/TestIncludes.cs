@@ -161,6 +161,18 @@ This is a header
         }
 
         [Test]
+        public void TestIncludePromotedNamedArguments()
+        {
+            var template = Template.Parse(@"{{ include 'named_arguments_promoted' this_arg: 5 }}");
+            var context = new TemplateContext();
+            context.TemplateLoader = new CustomTemplateLoader();
+
+            var text = template.Render(context).Replace("\r\n", "\n");
+            var expected = @"5";
+            TextAssert.AreEqual(expected, text);
+        }
+
+        [Test]
         public void TestIndentedIncludes()
         {
             var template = Template.Parse(@"  {{ include 'header' }}
@@ -321,19 +333,26 @@ Test2
             Assert.True(exception.Message.Contains(expectedString), $"The message `{exception.Message}` does not contain the string `${expectedString}`");
         }
 
-        
         [Test]
         public void TestIncludeJoin()
+        {
+            var template = Template.Parse("{{ include_join ['first', 'second', 'third'] ' ' }}");
+            var context = new TemplateContext() { TemplateLoader = new DummyLoader() };
+            var expectedString = "some text some text some text";
+            Assert.AreEqual(expectedString, template.Render(context));
+        }
+
+        [Test]
+        public void TestIncludeJoinWithOptionalParams()
         {
             var template = Template.Parse("{{ include_join ['first', 'second', 'third'] ' ' 'begin ' ' end' }}");
             var context = new TemplateContext() { TemplateLoader = new DummyLoader() };
             var expectedString = "begin some text some text some text end";
             Assert.AreEqual(expectedString, template.Render(context));
         }
-
         
         [Test]
-        public void TestIncludeJoinwithParams()
+        public void TestIncludeJoinWithParams()
         {
             var template = Template.Parse("{{ include_join joinTemplateNames ' ' 'begin ' ' end' }}");
             var scriptObject = new BuiltinFunctions();

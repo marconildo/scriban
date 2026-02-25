@@ -13,7 +13,8 @@ using Scriban.Runtime;
 namespace Scriban.DocGen
 {
     /// <summary>
-    /// Program generating the documentation for all builtin functions by extracting the code comments from xml files
+    /// Program generating the documentation for all builtin functions by extracting the code comments from xml files.
+    /// Generates per-group files under site/docs/builtins/.
     /// </summary>
     static class Program
     {
@@ -38,29 +39,112 @@ namespace Scriban.DocGen
                 [nameof(TimeSpanFunctions)] = "timespan"
             };
 
-            var writer = new StreamWriter("../../../../../doc/builtins.md");
-
-            writer.WriteLine(@"# Builtins
-
-This document describes the various built-in functions available in scriban.
-
-");
-
             var visitor = new MarkdownVisitor(builtinClassNames);
             members.Accept(visitor);
 
-            writer.WriteLine(visitor.Toc);
+            // --- Write per-group files under site/docs/builtins/ ---
+            WriteSiteBuiltins(visitor, builtinClassNames);
+        }
 
-            foreach (var classWriter in visitor.ClassWriters.OrderBy(c => c.Key).Select(c => c.Value))
+        /// <summary>
+        /// Escapes Scriban delimiters <c>{{ "{{" }}</c> and <c>{{ "}}" }}</c> so that they are not
+        /// interpreted by the Lunet template engine when rendering the site.
+        /// </summary>
+        static string EscapeForSite(string text)
+        {
+            // Two-pass replacement via placeholders to avoid recursive substitution.
+            text = text.Replace("{{", "___OPEN___");
+            text = text.Replace("}}", "___CLOSE___");
+            text = text.Replace("___OPEN___", "{{ \"{{\" }}");
+            text = text.Replace("___CLOSE___", "{{ \"}}\" }}");
+            return text;
+        }
+
+        /// <summary>
+        /// Writes per-group Markdown files with front matter under site/docs/builtins/.
+        /// Also writes a readme.md index and a menu.yml for navigation.
+        /// </summary>
+        static void WriteSiteBuiltins(MarkdownVisitor visitor, Dictionary<string, string> builtinClassNames)
+        {
+            var baseDir = Path.Combine(AppContext.BaseDirectory, "../../../../../site/docs/builtins");
+            var siteDir = Path.GetFullPath(baseDir);
+            Directory.CreateDirectory(siteDir);
+
+            var orderedGroups = visitor.ClassWriters.OrderBy(c => c.Key).ToList();
+
+            // --- Write the index page: readme.md ---
+            using (var indexWriter = new StreamWriter(Path.Combine(siteDir, "readme.md")))
             {
-                writer.Write(classWriter.Head);
-                writer.Write(classWriter.Body);
+                indexWriter.WriteLine("---");
+                indexWriter.WriteLine("title: \"Built-in functions\"");
+                indexWriter.WriteLine("---");
+                indexWriter.WriteLine();
+                indexWriter.WriteLine("# Built-in functions");
+                indexWriter.WriteLine();
+                indexWriter.WriteLine("Scriban provides a rich set of built-in functions organized into groups. Click on a group below to see all available functions.");
+                indexWriter.WriteLine();
+
+                foreach (var kvp in orderedGroups)
+                {
+                    var shortName = kvp.Key;
+                    var titleCase = char.ToUpperInvariant(shortName[0]) + shortName.Substring(1);
+                    indexWriter.WriteLine($"- [`{shortName}` functions]({shortName}.md) — {titleCase} manipulation functions");
+                }
+
+                indexWriter.WriteLine();
+                indexWriter.WriteLine("> Note: This document was automatically generated from the source code using `Scriban.DocGen`.");
             }
 
-            writer.WriteLine();
-            writer.WriteLine("> Note: This document was automatically generated from the sourcecode using `Scriban.DocGen` program");
-            writer.Flush();
-            writer.Close();
+            // --- Write menu.yml ---
+            using (var menuWriter = new StreamWriter(Path.Combine(siteDir, "menu.yml")))
+            {
+                menuWriter.WriteLine("doc:");
+                menuWriter.WriteLine("  - {path: readme.md, title: \"<i class='bi bi-gear' aria-hidden='true'></i> Overview\"}");
+                foreach (var kvp in orderedGroups)
+                {
+                    var shortName = kvp.Key;
+                    var titleCase = char.ToUpperInvariant(shortName[0]) + shortName.Substring(1);
+                    menuWriter.WriteLine($"  - {{path: {shortName}.md, title: \"{titleCase}\"}}");
+                }
+            }
+
+            // --- Write per-group files ---
+            foreach (var kvp in orderedGroups)
+            {
+                var shortName = kvp.Key;
+                var classWriter = kvp.Value;
+                var titleCase = char.ToUpperInvariant(shortName[0]) + shortName.Substring(1);
+                var filePath = Path.Combine(siteDir, $"{shortName}.md");
+
+                // Get the raw content and adjust heading levels for standalone pages:
+                // - "## `x` functions" -> "# `x` functions" (h2 -> h1)
+                // - "### `x.method`" -> "## `x.method`" (h3 -> h2)
+                // - Remove [:top:](#builtins) links
+                var headContent = classWriter.Head.ToString();
+                var bodyContent = classWriter.Body.ToString();
+
+                headContent = headContent.Replace("[:top:](#builtins)\r\n\r\n", "");
+                headContent = headContent.Replace("[:top:](#builtins)\n\n", "");
+                headContent = Regex.Replace(headContent, @"^## ", "# ", RegexOptions.Multiline);
+
+                bodyContent = bodyContent.Replace("[:top:](#builtins)\r\n", "");
+                bodyContent = bodyContent.Replace("[:top:](#builtins)\n", "");
+                bodyContent = Regex.Replace(bodyContent, @"^### ", "## ", RegexOptions.Multiline);
+
+                // Escape {{ and }} so they are not interpreted by the Lunet Scriban engine
+                headContent = EscapeForSite(headContent);
+                bodyContent = EscapeForSite(bodyContent);
+
+                using var fileWriter = new StreamWriter(filePath);
+                fileWriter.WriteLine("---");
+                fileWriter.WriteLine($"title: \"{titleCase} functions\"");
+                fileWriter.WriteLine("---");
+                fileWriter.WriteLine();
+                fileWriter.Write(headContent);
+                fileWriter.Write(bodyContent);
+                fileWriter.WriteLine();
+                fileWriter.WriteLine("> Note: This document was automatically generated from the source code using `Scriban.DocGen`.");
+            }
         }
 
 
@@ -146,7 +230,7 @@ This document describes the various built-in functions available in scriban.
 
                     var classWriter = _classWriters[shortName];
 
-                    // Write the toc
+                    // Write the toc — GitHub-style same-page anchor (dots stripped from heading)
                     classWriter.Head.WriteLine($"- [`{shortName}.{methodShortName}`](#{shortName}{methodShortName})");
 
                     _writer = classWriter.Body;
@@ -282,13 +366,13 @@ This document describes the various built-in functions available in scriban.
                 const string inputText = "> **input**";
                 if (!content.Contains(inputText)) return content;
 
-                var regex = new Regex(@"```scriban\-html\n([\S\s]*?)\n```", RegexOptions.Multiline);
+                var regex = new Regex(@"```scriban\-html(?:\r\n|\r|\n)([\S\s]*?)(?:\r\n|\r|\n)```", RegexOptions.Multiline);
                 var matches = regex.Matches(content);
                 foreach (Match match in matches)
                 {
-                    var template = match.Groups[1].Value;
-                    var link = $"https://scribanonline.azurewebsites.net/?template={Uri.EscapeDataString(template)}&model={{}}";
-                    content = content.Replace($"{inputText}\r\n{match.Value}", $"{inputText} [:fast_forward: Try out]({link})\r\n{match.Value}");
+                    var template = match.Groups[1].Value.ReplaceLineEndings("\n");
+                    var link = $"/?template={Uri.EscapeDataString(template)}&model=%7B%7D";
+                    content = content.Replace($"{inputText}\r\n{match.Value}", $"{inputText} [Try out]({link})\r\n{match.Value}");
                 }
 
                 return content;

@@ -61,7 +61,6 @@ namespace Scriban
         private FastStack<ScriptPipeArguments> _pipeArguments;
         private FastStack<List<ScriptExpression>> _availableScriptExpressionLists;
         private object[][] _availableReflectionArguments;
-        private FastStack<Dictionary<object, object>> _availableTags;
         private ScriptPipeArguments _currentPipeArguments;
         private bool _previousTextWasNewLine;
         private readonly IEqualityComparer<string> _keyComparer;
@@ -172,8 +171,6 @@ namespace Scriban
             _availableStores = new FastStack<ScriptObject>(4);
             _cultures = new FastStack<CultureInfo>(4);
             _caseValues = new FastStack<object>(4);
-
-            _availableTags = new FastStack<Dictionary<object, object>>(4);
 
             _sourceFiles = new FastStack<string>(4);
 
@@ -1005,7 +1002,6 @@ namespace Scriban
         {
             if (loop == null) throw new ArgumentNullException(nameof(loop));
             _loops.Push(loop);
-            _loopStep = 0;
             PushVariableScope(VariableScope.Loop);
             OnEnterLoop(loop);
         }
@@ -1031,7 +1027,10 @@ namespace Scriban
             {
                 PopVariableScope(VariableScope.Loop);
                 _loops.Pop();
-                _loopStep = 0;
+                if (!IsInLoop)
+                {
+                    _loopStep = 0;
+                }
             }
         }
 
@@ -1285,7 +1284,32 @@ namespace Scriban
 
             return template;
         }
-    
+
+        /// <summary>
+        /// Promotes named arguments in a script function call to local variables within the current context.
+        /// </summary>
+        private IReadOnlyList<ScriptVariable> PromoteScriptNamedArguments(ScriptNode scriptNode)
+        {
+            var newVariables = new List<ScriptVariable>();
+            if (!(scriptNode is ScriptFunctionCall sfc))
+            {
+                return Array.Empty<ScriptVariable>();
+            }
+
+            foreach (var item in sfc.Arguments)
+            {
+                if (!(item is ScriptNamedArgument sna))
+                {
+                    continue;
+                }
+                // add a local variable for each named argument
+                var newLocalVariable = ScriptVariable.Create(sna.Name.Name, ScriptVariableScope.Local);
+                SetValue(variable: newLocalVariable, value: sna.Value, asReadOnly: true, force: true);
+                newVariables.Add(newLocalVariable);
+            }
+            return newVariables.ToArray();
+        }
+
         public string RenderTemplate(Template template, ScriptArray arguments, ScriptNode callerContext)
         {
             // Make sure that we cannot recursively include a template
@@ -1295,9 +1319,11 @@ namespace Scriban
             CurrentIndent = null;
             PushOutput();
             var previousArguments = GetValue(ScriptVariable.Arguments);
+            IReadOnlyList<ScriptVariable> promotedVariables = Array.Empty<ScriptVariable>();
             try
             {
                 SetValue(ScriptVariable.Arguments, arguments, true, true);
+                promotedVariables = PromoteScriptNamedArguments(callerContext);
                 if (previousIndent != null)
                 {
                     // We reset before and after the fact that we have a new line
@@ -1317,6 +1343,11 @@ namespace Scriban
 
                 // Remove the arguments
                 DeleteValue(ScriptVariable.Arguments);
+                // Remove any promoted variables
+                foreach (var v in promotedVariables)
+                {
+                    DeleteValue(v);
+                }
                 if (previousArguments != null)
                 {
                     // Restore them if necessary
